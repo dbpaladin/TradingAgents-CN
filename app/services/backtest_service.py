@@ -115,8 +115,8 @@ class BacktestEngine:
     def _calculate_buy_shares(self, price: float) -> int:
         """计算可买入股数（按手 100 股计算）"""
         available_cash = self.cash * self.config.position_ratio
-        max_amount = available_cash / (price * (1 + self.config.commission_rate))
-        shares = int(max_amount / price / 100) * 100  # 取整到手（100股）
+        # 考虑佣金后能买的最大股数，直接用总资金除以单股成本（含手续费）
+        shares = int(available_cash / (price * (1 + self.config.commission_rate)) / 100) * 100
         return max(0, shares)
 
     def _parse_ai_decision(self, decision: Dict) -> Tuple[TradeAction, float, str]:

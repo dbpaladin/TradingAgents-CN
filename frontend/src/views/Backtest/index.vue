@@ -329,6 +329,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useRoute, useRouter } from 'vue-router'
 import {
   DataAnalysis, Setting, Search, VideoPlay, Clock, Refresh,
   Loading, Calendar, TrendCharts, List
@@ -356,6 +357,8 @@ const rules = {
 const stockName = ref('')
 const loadingName = ref(false)
 const submitting = ref(false)
+const route = useRoute()
+const router = useRouter()
 
 // ===== 任务状态 =====
 const currentTaskId = ref<string | null>(null)
@@ -613,9 +616,34 @@ function renderChart() {
   })
 }
 
-onMounted(() => {
-  loadTaskHistory()
+onMounted(async () => {
+  // 恢复历史记录
+  await loadTaskHistory()
   window.addEventListener('resize', () => chartInstance?.resize())
+
+  // 如果路由带 task_id（来自任务中心的“查看结果”跳转）,自动加载该任务
+  const taskIdFromQuery = route.query.task_id as string | undefined
+  if (taskIdFromQuery) {
+    const matched = taskHistory.value.find(t => t.task_id === taskIdFromQuery)
+    if (matched) {
+      selectTask(matched)
+    } else {
+      // 任务列表中不在（比如平常加载不到），直接尝试加载结果
+      currentTaskId.value = taskIdFromQuery
+      const status = await backtestApi.getTaskStatus(taskIdFromQuery).catch(() => null)
+      const s = (status as any)?.data?.status || (status as any)?.status
+      if (s === 'completed') {
+        await loadResult(taskIdFromQuery)
+      } else if (s === 'running' || s === 'pending') {
+        runningTaskStatus.value = (status as any)?.data || (status as any) 
+        startPolling(taskIdFromQuery)
+      } else if (s === 'failed') {
+        failedErrorMsg.value = (status as any)?.data?.error_message || '回测失败'
+      }
+    }
+    // 清除 query 参数，避免刻新页面时重复加载
+    router.replace({ path: '/backtest' })
+  }
 })
 
 onUnmounted(() => {

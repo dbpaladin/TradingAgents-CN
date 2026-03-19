@@ -14,6 +14,7 @@
         <el-tab-pane label="已完成" name="completed" />
         <el-tab-pane label="失败" name="failed" />
         <el-tab-pane label="全部" name="all" />
+        <el-tab-pane label="📈 回测任务" name="backtest" />
       </el-tabs>
     </el-card>
 
@@ -128,6 +129,85 @@
       </div>
     </el-card>
 
+    <!-- ===== 回测任务列表 ===== -->
+    <el-card v-if="activeTab === 'backtest'" class="list-card" shadow="never" style="margin-top: 16px;">
+      <template #header>
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <span style="font-weight:600;">📈 回测任务列表</span>
+          <el-button size="small" @click="loadBacktestList" :loading="backtestLoading">
+            <el-icon><Refresh /></el-icon> 刷新
+          </el-button>
+        </div>
+      </template>
+
+      <el-table :data="backtestList" v-loading="backtestLoading" style="width:100%">
+        <el-table-column label="股票" width="130">
+          <template #default="{ row }">
+            <div style="font-weight:600;">{{ row.symbol }}</div>
+            <div style="font-size:12px;color:#999;">{{ row.stock_name || row.name || '' }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="回测区间" width="200">
+          <template #default="{ row }">
+            {{ row.start_date }} ～ {{ row.end_date }}
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="130">
+          <template #default="{ row }">
+            <el-tag :type="getBacktestStatusType(row.status)" size="small">{{ getBacktestStatusText(row.status) }}</el-tag>
+            <el-progress
+              v-if="row.status === 'running' || row.status === 'pending'"
+              :percentage="row.progress || 0"
+              :stroke-width="4"
+              size="small"
+              status="striped"
+              style="margin-top:4px;"
+            />
+          </template>
+        </el-table-column>
+        <el-table-column label="总收益率" width="100">
+          <template #default="{ row }">
+            <span v-if="row.total_return !== null && row.total_return !== undefined"
+              :style="{ color: row.total_return >= 0 ? '#ef4444' : '#22c55e', fontWeight: 700 }">
+              {{ row.total_return >= 0 ? '+' : '' }}{{ row.total_return?.toFixed(2) }}%
+            </span>
+            <span v-else style="color:#999;">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="最大回撤" width="100">
+          <template #default="{ row }">
+            <span v-if="row.max_drawdown !== null && row.max_drawdown !== undefined" style="color:#22c55e;">
+              -{{ row.max_drawdown?.toFixed(2) }}%
+            </span>
+            <span v-else style="color:#999;">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="创建时间" width="160">
+          <template #default="{ row }">
+            {{ formatTime(row.created_at) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" fixed="right" width="180">
+          <template #default="{ row }">
+            <el-button
+              v-if="row.status === 'completed'"
+              type="primary" link size="small"
+              @click="openBacktestResult(row)"
+            >查看结果</el-button>
+            <el-button
+              v-if="row.status === 'failed'"
+              type="warning" link size="small"
+              @click="ElMessage.error(row.error_message || '回测失败')"
+            >查看错误</el-button>
+            <el-button
+              type="danger" link size="small"
+              @click="deleteBacktestTask(row)"
+            >删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
     <!-- 结果弹窗组件化 -->
     <TaskResultDialog
       v-model="resultVisible"
@@ -135,7 +215,6 @@
       @close="resultVisible=false"
       @view-report="openReport(currentRow)"
     />
-
 
     <!-- 报告详情弹窗组件化（预留） -->
     <TaskReportDialog v-model="reportVisible" :sections="reportSections" @close="reportVisible=false" />
@@ -149,6 +228,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { List, Refresh, Download } from '@element-plus/icons-vue'
 import { analysisApi } from '@/api/analysis'
+import { backtestApi, type BacktestTaskListItem } from '@/api/backtest'
 import { marked } from 'marked'
 import TaskResultDialog from '@/components/Global/TaskResultDialog.vue'
 import TaskReportDialog from '@/components/Global/TaskReportDialog.vue'
@@ -162,7 +242,7 @@ const renderMarkdown = (s: string) => {
 const router = useRouter()
 const route = useRoute()
 
-const activeTab = ref<'running'|'completed'|'failed'|'all'>('running')
+const activeTab = ref<'running'|'completed'|'failed'|'all'|'backtest'>('running')
 const loading = ref(false)
 const keyword = ref('')
 const currentPage = ref(1)
@@ -176,6 +256,59 @@ const filters = ref<{ dateRange: string[]; market: string; status: string; stock
 })
 const stats = ref({ total: 0, completed: 0, failed: 0, uniqueStocks: 0 })
 
+
+// ===== 回测任务相关状态 =====
+const backtestList = ref<BacktestTaskListItem[]>([])
+const backtestLoading = ref(false)
+let backtestPollTimer: any = null
+
+const loadBacktestList = async () => {
+  backtestLoading.value = true
+  try {
+    const res = await backtestApi.listTasks({ limit: 50 })
+    backtestList.value = (res as any)?.data?.tasks || (res as any)?.tasks || []
+  } catch (e: any) {
+    ElMessage.error('加载回测任务失败: ' + (e?.message || ''))
+  } finally {
+    backtestLoading.value = false
+  }
+}
+
+const openBacktestResult = (row: BacktestTaskListItem) => {
+  router.push({ path: '/backtest', query: { task_id: row.task_id } })
+}
+
+const deleteBacktestTask = async (row: BacktestTaskListItem) => {
+  try {
+    await ElMessageBox.confirm(`确定删除回测任务 「${row.symbol}」？`, '确认删除', {
+      confirmButtonText: '删除', cancelButtonText: '取消', type: 'error'
+    })
+    await backtestApi.deleteTask(row.task_id)
+    ElMessage.success('已删除')
+    await loadBacktestList()
+  } catch (e: any) {
+    if (e !== 'cancel') ElMessage.error(e?.message || '删除失败')
+  }
+}
+
+const getBacktestStatusType = (status: string): 'success' | 'info' | 'warning' | 'danger' => {
+  const map: Record<string, 'success' | 'info' | 'warning' | 'danger'> = {
+    pending: 'info', running: 'warning', completed: 'success', failed: 'danger', cancelled: 'info'
+  }
+  return map[status] || 'info'
+}
+
+const getBacktestStatusText = (status: string) =>
+  ({ pending: '等待中', running: '运行中', completed: '已完成', failed: '失败', cancelled: '已取消' } as any)[status] || status
+
+const setupBacktestPolling = () => {
+  clearInterval(backtestPollTimer)
+  // 如果有运行中的回测，每 5 秒刷新一次
+  const hasRunning = backtestList.value.some(t => t.status === 'running' || t.status === 'pending')
+  if (hasRunning) {
+    backtestPollTimer = setInterval(loadBacktestList, 5000)
+  }
+}
 
 // WebSocket 连接管理
 let wsConnections: Map<string, WebSocket> = new Map()
@@ -336,11 +469,18 @@ const filteredList = computed(() => {
 const handleSizeChange = (size:number) => { pageSize.value = size; currentPage.value = 1; loadList() }
 const handleCurrentChange = (page:number) => { currentPage.value = page; loadList() }
 const onTabChange = () => {
-  // 使用 nextTick 确保 activeTab 的值已经更新
   nextTick(() => {
-    currentPage.value = 1
-    loadList()
-    setupPolling()
+    if (activeTab.value === 'backtest') {
+      loadBacktestList()
+      clearInterval(timer) // 停止分析任务轮询
+      // 在回测列表加载后，按需启动轮询
+      nextTick(setupBacktestPolling)
+    } else {
+      clearInterval(backtestPollTimer)
+      currentPage.value = 1
+      loadList()
+      setupPolling()
+    }
   })
 }
 const refreshList = () => loadList()
@@ -494,26 +634,35 @@ const exportSelected = () => {
 onMounted(() => {
   // 根据路由 query 初始化标签页
   const tab = String((route.query as any)?.tab || '').toLowerCase()
-  const validTabs = ['running', 'completed', 'failed', 'all']
+  const validTabs = ['running', 'completed', 'failed', 'all', 'backtest']
   if (validTabs.includes(tab)) {
     activeTab.value = tab as any
   }
-  loadList(); setupPolling()
+  if (activeTab.value === 'backtest') {
+    loadBacktestList().then(setupBacktestPolling)
+  } else {
+    loadList(); setupPolling()
+  }
 })
 
 // 监听路由 query 的 tab 变化，动态切换标签页
 watch(() => (route.query as any)?.tab, (newVal) => {
   const tab = String(newVal || '').toLowerCase()
-  const validTabs = ['running', 'completed', 'failed', 'all']
+  const validTabs = ['running', 'completed', 'failed', 'all', 'backtest']
   if (validTabs.includes(tab)) {
     activeTab.value = tab as any
-    currentPage.value = 1
-    loadList()
-    setupPolling()
+    if (tab === 'backtest') {
+      loadBacktestList().then(setupBacktestPolling)
+    } else {
+      currentPage.value = 1
+      loadList()
+      setupPolling()
+    }
   }
 })
 onUnmounted(() => {
   clearInterval(timer)
+  clearInterval(backtestPollTimer)
   disconnectAllWebSockets()
 })
 
