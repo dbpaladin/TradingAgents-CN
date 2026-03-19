@@ -596,7 +596,6 @@ async def lifespan(app: FastAPI):
             user_service.close()
         except Exception as e:
             logger.warning(f"UserService cleanup error: {e}")
-
         await close_db()
         logger.info("TradingAgents FastAPI backend stopped")
 
@@ -608,7 +607,8 @@ app = FastAPI(
     version=get_version(),
     docs_url="/docs" if settings.DEBUG else None,
     redoc_url="/redoc" if settings.DEBUG else None,
-    lifespan=lifespan
+    lifespan=lifespan,
+    strict_slashes=False
 )
 
 # 安全中间件
@@ -685,7 +685,7 @@ async def test_log():
 
 # 注册路由
 app.include_router(health.router, prefix="/api", tags=["health"])
-app.include_router(auth.router, prefix="/api/auth", tags=["authentication"], strict_slashes=False)
+app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
 app.include_router(analysis.router, prefix="/api/analysis", tags=["analysis"])
 app.include_router(reports.router, tags=["reports"])
 app.include_router(screening.router, prefix="/api/screening", tags=["screening"])
@@ -729,7 +729,7 @@ app.include_router(financial_data.router, tags=["financial-data"])
 app.include_router(news_data.router, tags=["news-data"])
 app.include_router(social_media.router, tags=["social-media"])
 app.include_router(internal_messages.router, tags=["internal-messages"])
-app.include_router(backtest_router.router, prefix="/api/backtest", tags=["backtest"], strict_slashes=False)
+app.include_router(backtest_router.router, prefix="/api/backtest", tags=["backtest"])
 
 
 
