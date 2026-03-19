@@ -607,9 +607,12 @@ app = FastAPI(
     version=get_version(),
     docs_url="/docs" if settings.DEBUG else None,
     redoc_url="/redoc" if settings.DEBUG else None,
-    lifespan=lifespan,
-    strict_slashes=False
+    lifespan=lifespan
 )
+
+# 允许 URL 结尾有无斜杠 (解决 405 问题的另一种方案)
+app.router.redirect_slashes = False
+
 
 # 安全中间件
 if not settings.DEBUG:
