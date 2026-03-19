@@ -374,7 +374,8 @@ class BacktestEngine:
             "days_total": total_days,
             "days_price_none": 0,
             "ai_buy": 0, "ai_sell": 0, "ai_hold": 0,
-            "exec_buy": 0, "exec_sell": 0, "exec_abort_buy": 0, "exec_abort_sell": 0
+            "exec_buy": 0, "exec_sell": 0, "exec_abort_buy": 0, "exec_abort_sell": 0,
+            "hold_reasons": []
         }
         for idx, date_str in enumerate(trading_days):
             progress = int(5 + (idx / total_days) * 90)
@@ -418,6 +419,8 @@ class BacktestEngine:
                 else: diagnostic_stats["exec_abort_sell"] += 1
             else:
                 diagnostic_stats["ai_hold"] += 1
+                if len(diagnostic_stats["hold_reasons"]) < 3:
+                    diagnostic_stats["hold_reasons"].append(f"[{date_str}]{reason[:100]}")
                 
             self.trades.append(trade)
 
@@ -433,10 +436,11 @@ class BacktestEngine:
         
         # 如果没有任何执行的交易，打印诊断报告
         if diagnostic_stats["exec_buy"] == 0 and diagnostic_stats["exec_sell"] == 0:
-            diag_str = f"🛑 回测0交易诊断: 总天数={diagnostic_stats['days_total']}, 无价格={diagnostic_stats['days_price_none']}, " \
-                       f"AI买入={diagnostic_stats['ai_buy']}(失败={diagnostic_stats['exec_abort_buy']}), " \
-                       f"AI卖出={diagnostic_stats['ai_sell']}(失败={diagnostic_stats['exec_abort_sell']}), " \
-                       f"AI持有={diagnostic_stats['ai_hold']}"
+            reasons_str = " | ".join(diagnostic_stats["hold_reasons"])
+            diag_str = f"🛑 回测0交易诊断: 总单={diagnostic_stats['days_total']}, 无价格={diagnostic_stats['days_price_none']}, " \
+                       f"AI买入={diagnostic_stats['ai_buy']}(执行失败={diagnostic_stats['exec_abort_buy']}), " \
+                       f"AI卖出={diagnostic_stats['ai_sell']}(执行失败={diagnostic_stats['exec_abort_sell']}), " \
+                       f"AI持有={diagnostic_stats['ai_hold']}次。持有原因摘录: {reasons_str}"
             logger.error(diag_str)
             # 把诊断信息写到一条 fake trade 记录中，方便前端直接看到
             self.trades.append(TradeRecord(
