@@ -370,6 +370,12 @@ class BacktestEngine:
             pass
 
         # 3. 逐日循环
+        diagnostic_stats = {
+            "days_total": total_days,
+            "days_price_none": 0,
+            "ai_buy": 0, "ai_sell": 0, "ai_hold": 0,
+            "exec_buy": 0, "exec_sell": 0, "exec_abort_buy": 0, "exec_abort_sell": 0
+        }
         for idx, date_str in enumerate(trading_days):
             progress = int(5 + (idx / total_days) * 90)
             await self._update_progress(progress, date_str, f"🔍 分析 {date_str} ({idx+1}/{total_days})...")
@@ -378,6 +384,7 @@ class BacktestEngine:
             price = await self._get_stock_price(self.config.symbol, date_str)
             if price is None or price <= 0:
                 logger.warning(f"⚠️ {date_str}: 无法获取价格，跳过")
+                diagnostic_stats["days_price_none"] += 1
                 # 记录持仓不变的净值
                 await self._record_daily_equity(date_str, price or 0.0, benchmark_start_price)
                 continue
@@ -399,6 +406,19 @@ class BacktestEngine:
 
             # 3e. 执行交易
             trade = await self._execute_trade(date_str, price, action, confidence, reason, t1_restricted, limit_up, limit_down)
+            
+            # 记录诊断统计
+            if action == TradeAction.BUY:
+                diagnostic_stats["ai_buy"] += 1
+                if trade.executed: diagnostic_stats["exec_buy"] += 1
+                else: diagnostic_stats["exec_abort_buy"] += 1
+            elif action == TradeAction.SELL:
+                diagnostic_stats["ai_sell"] += 1
+                if trade.executed: diagnostic_stats["exec_sell"] += 1
+                else: diagnostic_stats["exec_abort_sell"] += 1
+            else:
+                diagnostic_stats["ai_hold"] += 1
+                
             self.trades.append(trade)
 
             # 3f. 记录每日净值
@@ -410,6 +430,26 @@ class BacktestEngine:
 
         # 4. 计算最终绩效指标
         await self._update_progress(97, trading_days[-1] if trading_days else "", "📊 计算绩效指标...")
+        
+        # 如果没有任何执行的交易，打印诊断报告
+        if diagnostic_stats["exec_buy"] == 0 and diagnostic_stats["exec_sell"] == 0:
+            diag_str = f"🛑 回测0交易诊断: 总天数={diagnostic_stats['days_total']}, 无价格={diagnostic_stats['days_price_none']}, " \
+                       f"AI买入={diagnostic_stats['ai_buy']}(失败={diagnostic_stats['exec_abort_buy']}), " \
+                       f"AI卖出={diagnostic_stats['ai_sell']}(失败={diagnostic_stats['exec_abort_sell']}), " \
+                       f"AI持有={diagnostic_stats['ai_hold']}"
+            logger.error(diag_str)
+            # 把诊断信息写到一条 fake trade 记录中，方便前端直接看到
+            self.trades.append(TradeRecord(
+                date=self.config.end_date,
+                action=TradeAction.HOLD,
+                price=0.0, shares=0, amount=0.0, commission=0.0, stamp_duty=0.0,
+                total_cost=0.0, cash=self.cash, position_shares=self.position_shares,
+                position_value=0.0, total_assets=self.cash,
+                ai_signal="DIAGNOSTIC", ai_confidence=1.0,
+                ai_reason=diag_str,
+                t1_restriction=False, limit_up=False, limit_down=False, executed=True
+            ))
+
         metrics = self._calculate_metrics(trading_days)
 
         result = BacktestResult(
