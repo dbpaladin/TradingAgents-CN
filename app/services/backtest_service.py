@@ -355,8 +355,10 @@ class BacktestEngine:
                 logger.warning(f"⚠️ AI分析返回空决策 [{symbol} {date_str}]: {decision}")
                 return {}
         except Exception as e:
-            logger.error(f"❌ AI分析失败 [{symbol} {date_str}]: {type(e).__name__}: {e}", exc_info=True)
-            return {}
+            import traceback
+            error_msg = f"{type(e).__name__}: {str(e)[:100]}"
+            logger.error(f"❌ AI分析失败 [{symbol} {date_str}]:\n{traceback.format_exc()}")
+            return {"action": "HOLD", "confidence": 0.0, "reasoning": f"AI引擎内部报错: {error_msg}"}
 
     async def run(self) -> BacktestResult:
         """
