@@ -47,6 +47,12 @@
       <template #title>模拟交易</template>
     </el-menu-item>
 
+    <el-menu-item index="/backtest">
+      <el-icon><DataAnalysis /></el-icon>
+      <template #title>A股回测</template>
+    </el-menu-item>
+
+
 
     <!-- 分析报告已移至“股票分析”子菜单，保留注释便于追踪 -->
     <!--
@@ -112,8 +118,10 @@ import {
   /* Document 移除：不再使用顶级分析报告菜单图标 */
   Setting,
   InfoFilled,
-  CreditCard
+  CreditCard,
+  DataAnalysis
 } from '@element-plus/icons-vue'
+
 
 const route = useRoute()
 const appStore = useAppStore()
