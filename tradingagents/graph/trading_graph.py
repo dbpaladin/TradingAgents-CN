@@ -206,6 +206,9 @@ class TradingAgentsGraph:
             debug: Whether to run in debug mode
             config: Configuration dictionary. If None, uses default config
         """
+        # Alias 'sentiment' from frontend to 'social' used by graph nodes and conditional logic
+        self.selected_analysts = ["social" if a == "sentiment" else a for a in selected_analysts]
+        
         self.debug = debug
         self.config = config or DEFAULT_CONFIG
 
