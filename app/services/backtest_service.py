@@ -139,6 +139,7 @@ class BacktestEngine:
         reason = (
             decision.get("summary") or
             decision.get("reason") or
+            decision.get("reasoning") or  # signal_processing 返回的是 reasoning
             (decision.get("key_points", [""])[0] if isinstance(decision.get("key_points"), list) and decision.get("key_points") else "")
         )
         reason = str(reason)[:200]  # 截断
@@ -149,7 +150,7 @@ class BacktestEngine:
         elif any(kw in action_str for kw in ["SELL", "卖出", "强烈卖出", "STRONG_SELL"]):
             return TradeAction.SELL, confidence, reason
         else:
-            return TradeAction.HOLD, confidence, reason
+            return TradeAction.HOLD, confidence, reason or "无明确AI信号"
 
     async def _get_trading_calendar(self, start_date: str, end_date: str) -> List[str]:
         """
@@ -334,16 +335,27 @@ class BacktestEngine:
             loop = asyncio.get_event_loop()
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor() as executor:
-                _, decision = await loop.run_in_executor(
+                result_tuple = await loop.run_in_executor(
                     executor,
                     trading_graph.propagate,
                     _normalize_symbol(symbol),
                     date_str
                 )
 
-            return decision if isinstance(decision, dict) else {}
+            # propagate 返回 (final_state, decision) 元组
+            if isinstance(result_tuple, tuple) and len(result_tuple) == 2:
+                _, decision = result_tuple
+            else:
+                decision = result_tuple
+
+            if isinstance(decision, dict) and decision:
+                logger.info(f"✅ AI分析完成 [{symbol} {date_str}]: action={decision.get('action')}, confidence={decision.get('confidence')}")
+                return decision
+            else:
+                logger.warning(f"⚠️ AI分析返回空决策 [{symbol} {date_str}]: {decision}")
+                return {}
         except Exception as e:
-            logger.error(f"❌ AI分析失败 [{symbol} {date_str}]: {e}")
+            logger.error(f"❌ AI分析失败 [{symbol} {date_str}]: {type(e).__name__}: {e}", exc_info=True)
             return {}
 
     async def run(self) -> BacktestResult:
@@ -809,11 +821,17 @@ class BacktestService:
         """获取用户的回测任务列表"""
         db = get_mongo_db()
         try:
-            uid_obj = ObjectId(user_id) if user_id != "admin" else ObjectId("507f1f77bcf86cd799439011")
+            uid_str = user_id if user_id != "admin" else "507f1f77bcf86cd799439011"
+            uid_obj = ObjectId(uid_str)
         except Exception:
+            uid_str = user_id
             uid_obj = None
 
-        query = {"user_id": uid_obj} if uid_obj else {}
+        if uid_obj:
+            query = {"user_id": {"$in": [uid_str, uid_obj]}}
+        else:
+            query = {"user_id": uid_str}
+            
         cursor = db.backtest_tasks.find(query, {"result": 0}).sort("created_at", -1).skip(offset).limit(limit)
         tasks = []
         async for doc in cursor:
