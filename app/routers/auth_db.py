@@ -216,6 +216,48 @@ async def login(payload: LoginRequest, request: Request):
         )
         raise HTTPException(status_code=500, detail="登录过程中发生系统错误")
 
+@router.post("/register")
+async def register(payload: UserCreate, request: Request):
+    """用户注册"""
+    start_time = time.time()
+    ip_address = request.client.host if request.client else "unknown"
+    user_agent = request.headers.get("user-agent", "")
+
+    logger.info(f"📝 注册请求 - 用户名: {payload.username}, IP: {ip_address}")
+
+    try:
+        new_user = await user_service.create_user(payload)
+        if not new_user:
+            raise HTTPException(status_code=400, detail="用户名或邮箱已存在")
+
+        await log_operation(
+            user_id=str(new_user.id),
+            username=new_user.username,
+            action_type=ActionType.USER_REGISTER,
+            action="用户注册",
+            details={"method": "manual"},
+            success=True,
+            duration_ms=int((time.time() - start_time) * 1000),
+            ip_address=ip_address,
+            user_agent=user_agent
+        )
+
+        return {
+            "success": True,
+            "data": {
+                "id": str(new_user.id),
+                "username": new_user.username,
+                "email": new_user.email
+            },
+            "message": "注册成功，请联系管理员启用账号"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ 注册异常: {e}")
+        raise HTTPException(status_code=500, detail=f"注册失败: {str(e)}")
+
+
 @router.post("/refresh")
 async def refresh_token(payload: RefreshTokenRequest):
     """刷新访问令牌"""
