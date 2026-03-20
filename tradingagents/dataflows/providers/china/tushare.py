@@ -21,6 +21,8 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_TUSHARE_ENDPOINT = "http://api.tushare.pro"
+
 
 class TushareProvider(BaseStockDataProvider):
     """
@@ -33,6 +35,8 @@ class TushareProvider(BaseStockDataProvider):
         self.api = None
         self.config = get_provider_config("tushare")
         self.token_source = None  # 记录 Token 来源: 'database' 或 'env'
+        self.endpoint = self.config.get("endpoint") or DEFAULT_TUSHARE_ENDPOINT
+        self.endpoint_source = "env" if self.config.get("endpoint") else "default"
 
         if not TUSHARE_AVAILABLE:
             self.logger.error("❌ Tushare库未安装，请运行: pip install tushare")
@@ -85,6 +89,60 @@ class TushareProvider(BaseStockDataProvider):
 
         return None
 
+    def _get_endpoint_from_database(self) -> Optional[str]:
+        """从数据库读取 Tushare endpoint 配置"""
+        try:
+            from app.core.database import get_mongo_db_sync
+            db = get_mongo_db_sync()
+            config_collection = db.system_configs
+
+            config_data = config_collection.find_one(
+                {"is_active": True},
+                sort=[("version", -1)]
+            )
+
+            if not config_data or not config_data.get("data_source_configs"):
+                return None
+
+            for ds_config in config_data["data_source_configs"]:
+                if ds_config.get("type") != "tushare":
+                    continue
+
+                endpoint = (
+                    ds_config.get("endpoint")
+                    or ds_config.get("config_params", {}).get("endpoint")
+                    or ds_config.get("config_params", {}).get("http_url")
+                )
+                if isinstance(endpoint, str) and endpoint.strip():
+                    return endpoint.strip()
+        except Exception as e:
+            self.logger.warning(f"⚠️ [DB查询] 从数据库读取 Tushare endpoint 失败: {e}")
+
+        return None
+
+    def _resolve_endpoint(self, db_endpoint: Optional[str]) -> tuple[str, str]:
+        """解析最终使用的 Tushare endpoint"""
+        if isinstance(db_endpoint, str) and db_endpoint.strip():
+            return db_endpoint.strip(), "database"
+
+        env_endpoint = self.config.get("endpoint")
+        if isinstance(env_endpoint, str) and env_endpoint.strip():
+            return env_endpoint.strip(), "env"
+
+        return DEFAULT_TUSHARE_ENDPOINT, "default"
+
+    def _configure_api_client(self, token: str, endpoint: str) -> None:
+        """初始化 Tushare API 客户端并应用自定义 endpoint"""
+        ts.set_token(token)
+        self.api = ts.pro_api()
+        self.api._DataApi__token = token
+        self.api._DataApi__http_url = endpoint
+
+    def _apply_endpoint(self, endpoint: str, source: str) -> None:
+        self.endpoint = endpoint
+        self.endpoint_source = source
+        self.logger.info(f"🔗 Tushare endpoint: {endpoint} (来源: {source})")
+
     def connect_sync(self) -> bool:
         """同步连接到Tushare"""
         if not TUSHARE_AVAILABLE:
@@ -98,6 +156,9 @@ class TushareProvider(BaseStockDataProvider):
             # 🔥 优先从数据库读取 Token
             self.logger.info("🔍 [步骤1] 开始从数据库读取 Tushare Token...")
             db_token = self._get_token_from_database()
+            db_endpoint = self._get_endpoint_from_database()
+            endpoint, endpoint_source = self._resolve_endpoint(db_endpoint)
+            self._apply_endpoint(endpoint, endpoint_source)
             if db_token:
                 self.logger.info(f"✅ [步骤1] 数据库中找到 Token (长度: {len(db_token)})")
             else:
@@ -114,10 +175,7 @@ class TushareProvider(BaseStockDataProvider):
             if db_token:
                 try:
                     self.logger.info(f"🔄 [步骤3] 尝试使用数据库中的 Tushare Token (超时: {test_timeout}秒)...")
-                    ts.set_token(db_token)
-                    self.api = ts.pro_api()
-                    self.api._DataApi__token = db_token
-                    self.api._DataApi__http_url = 'http://118.25.178.42:5000'
+                    self._configure_api_client(db_token, endpoint)
 
                     # 测试连接 - 直接调用同步方法（不使用 asyncio.run）
                     try:
@@ -131,7 +189,7 @@ class TushareProvider(BaseStockDataProvider):
                     if test_data is not None and not test_data.empty:
                         self.connected = True
                         self.token_source = 'database'
-                        self.logger.info(f"✅ [步骤3.2] Tushare连接成功 (Token来源: 数据库)")
+                        self.logger.info(f"✅ [步骤3.2] Tushare连接成功 (Token来源: 数据库, endpoint来源: {endpoint_source})")
                         return True
                     else:
                         self.logger.warning("⚠️ [步骤3.2] 数据库 Token 测试失败，尝试降级到 .env 配置...")
@@ -142,10 +200,7 @@ class TushareProvider(BaseStockDataProvider):
             if env_token:
                 try:
                     self.logger.info(f"🔄 [步骤4] 尝试使用 .env 中的 Tushare Token (超时: {test_timeout}秒)...")
-                    ts.set_token(env_token)
-                    self.api = ts.pro_api()
-                    self.api._DataApi__token = env_token
-                    self.api._DataApi__http_url = 'http://118.25.178.42:5000'
+                    self._configure_api_client(env_token, endpoint)
 
                     # 测试连接 - 直接调用同步方法（不使用 asyncio.run）
                     try:
@@ -159,7 +214,7 @@ class TushareProvider(BaseStockDataProvider):
                     if test_data is not None and not test_data.empty:
                         self.connected = True
                         self.token_source = 'env'
-                        self.logger.info(f"✅ [步骤4.2] Tushare连接成功 (Token来源: .env 环境变量)")
+                        self.logger.info(f"✅ [步骤4.2] Tushare连接成功 (Token来源: .env 环境变量, endpoint来源: {endpoint_source})")
                         return True
                     else:
                         self.logger.error("❌ [步骤4.2] .env Token 测试失败")
@@ -189,15 +244,15 @@ class TushareProvider(BaseStockDataProvider):
             # 🔥 优先从数据库读取 Token
             db_token = self._get_token_from_database()
             env_token = self.config.get('token')
+            db_endpoint = self._get_endpoint_from_database()
+            endpoint, endpoint_source = self._resolve_endpoint(db_endpoint)
+            self._apply_endpoint(endpoint, endpoint_source)
 
             # 尝试数据库 Token
             if db_token:
                 try:
                     self.logger.info(f"🔄 尝试使用数据库中的 Tushare Token (超时: {test_timeout}秒)...")
-                    ts.set_token(db_token)
-                    self.api = ts.pro_api()
-                    self.api._DataApi__token = db_token
-                    self.api._DataApi__http_url = 'http://118.25.178.42:5000'
+                    self._configure_api_client(db_token, endpoint)
 
                     # 测试连接（异步）- 使用超时
                     try:
@@ -215,7 +270,8 @@ class TushareProvider(BaseStockDataProvider):
 
                     if test_data is not None and not test_data.empty:
                         self.connected = True
-                        self.logger.info(f"✅ Tushare连接成功 (Token来源: 数据库)")
+                        self.token_source = 'database'
+                        self.logger.info(f"✅ Tushare连接成功 (Token来源: 数据库, endpoint来源: {endpoint_source})")
                         return True
                     else:
                         self.logger.warning("⚠️ 数据库 Token 测试失败，尝试降级到 .env 配置...")
@@ -226,10 +282,7 @@ class TushareProvider(BaseStockDataProvider):
             if env_token:
                 try:
                     self.logger.info(f"🔄 尝试使用 .env 中的 Tushare Token (超时: {test_timeout}秒)...")
-                    ts.set_token(env_token)
-                    self.api = ts.pro_api()
-                    self.api._DataApi__token = env_token
-                    self.api._DataApi__http_url = 'http://118.25.178.42:5000'
+                    self._configure_api_client(env_token, endpoint)
 
                     # 测试连接（异步）- 使用超时
                     try:
@@ -247,7 +300,8 @@ class TushareProvider(BaseStockDataProvider):
 
                     if test_data is not None and not test_data.empty:
                         self.connected = True
-                        self.logger.info(f"✅ Tushare连接成功 (Token来源: .env 环境变量)")
+                        self.token_source = 'env'
+                        self.logger.info(f"✅ Tushare连接成功 (Token来源: .env 环境变量, endpoint来源: {endpoint_source})")
                         return True
                     else:
                         self.logger.error("❌ .env Token 测试失败")
