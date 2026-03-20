@@ -62,6 +62,11 @@ pid_is_running() {
   kill -0 "$pid" >/dev/null 2>&1
 }
 
+get_pgid() {
+  local pid="$1"
+  ps -o pgid= -p "$pid" 2>/dev/null | tr -d '[:space:]'
+}
+
 process_group_is_running() {
   local pgid="$1"
   kill -0 "-$pgid" >/dev/null 2>&1
@@ -81,6 +86,33 @@ cleanup_pid_file_if_stale() {
   if [[ -n "${pid:-}" ]] && ! pid_is_running "$pid"; then
     rm -f "$pid_file"
   fi
+}
+
+detect_frontend_pid() {
+  ps -eo pid=,args= | awk -v root="$ROOT_DIR/frontend" -v port="$FRONTEND_PORT" '
+    index($0, root "/node_modules/.bin/vite") && index($0, "--port " port) { print $1; exit }
+  '
+}
+
+detect_backend_pid() {
+  ps -eo pid=,args= | awk -v root="$ROOT_DIR" -v port="$BACKEND_PORT" '
+    index($0, root "/.venv/bin/python -m uvicorn app.main:app") && index($0, "--port " port) { print $1; exit }
+  '
+}
+
+detect_pid_for_service() {
+  local name="$1"
+  case "$name" in
+    Frontend)
+      detect_frontend_pid
+      ;;
+    Backend)
+      detect_backend_pid
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 ensure_file_exists() {
@@ -184,26 +216,33 @@ stop_process() {
   local name="$1"
   local pid_file="$2"
   local pid
+  local pgid
 
   cleanup_pid_file_if_stale "$pid_file"
   pid="$(read_pid "$pid_file")"
   if [[ -z "${pid:-}" ]]; then
-    print_info "$name is not running"
-    return
+    pid="$(detect_pid_for_service "$name" || true)"
+    if [[ -z "${pid:-}" ]]; then
+      print_info "$name is not running"
+      return
+    fi
+    print_warn "$name PID file missing, using detected PID: $pid"
   fi
 
-  if process_group_is_running "$pid"; then
-    print_info "Stopping $name process group (PGID: $pid)"
-    kill "-$pid" >/dev/null 2>&1 || true
+  pgid="$(get_pgid "$pid")"
+
+  if [[ -n "${pgid:-}" ]] && process_group_is_running "$pgid"; then
+    print_info "Stopping $name process group (PGID: $pgid)"
+    kill "-$pgid" >/dev/null 2>&1 || true
     for _ in {1..10}; do
-      if ! process_group_is_running "$pid"; then
+      if ! process_group_is_running "$pgid"; then
         break
       fi
       sleep 1
     done
-    if process_group_is_running "$pid"; then
+    if process_group_is_running "$pgid"; then
       print_warn "$name did not stop gracefully, forcing process group kill"
-      kill -9 "-$pid" >/dev/null 2>&1 || true
+      kill -9 "-$pgid" >/dev/null 2>&1 || true
     fi
   elif pid_is_running "$pid"; then
     print_info "Stopping $name (PID: $pid)"
