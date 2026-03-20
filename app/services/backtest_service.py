@@ -310,18 +310,61 @@ class BacktestEngine:
         """调用 TradingAgentsGraph 执行 AI 分析"""
         try:
             from app.core.unified_config import unified_config
-            from app.services.simple_analysis_service import create_analysis_config
+            from app.services.simple_analysis_service import (
+                create_analysis_config,
+                get_provider_and_url_by_model_sync,
+            )
 
             quick_model = self.config.quick_analysis_model or unified_config.get_quick_analysis_model()
             deep_model = self.config.deep_analysis_model or unified_config.get_deep_analysis_model()
+
+            quick_model_config = None
+            deep_model_config = None
+            for llm_config in unified_config.get_llm_configs():
+                if llm_config.model_name == quick_model:
+                    quick_model_config = {
+                        "max_tokens": llm_config.max_tokens,
+                        "temperature": llm_config.temperature,
+                        "timeout": llm_config.timeout,
+                        "retry_times": llm_config.retry_times,
+                        "api_base": llm_config.api_base,
+                    }
+                if llm_config.model_name == deep_model:
+                    deep_model_config = {
+                        "max_tokens": llm_config.max_tokens,
+                        "temperature": llm_config.temperature,
+                        "timeout": llm_config.timeout,
+                        "retry_times": llm_config.retry_times,
+                        "api_base": llm_config.api_base,
+                    }
+
+            quick_provider_info = get_provider_and_url_by_model_sync(quick_model)
+            deep_provider_info = get_provider_and_url_by_model_sync(deep_model)
+            quick_provider = quick_provider_info["provider"]
+            deep_provider = deep_provider_info["provider"]
 
             config = create_analysis_config(
                 research_depth=self.config.research_depth,
                 selected_analysts=self.config.selected_analysts,
                 quick_model=quick_model,
                 deep_model=deep_model,
-                llm_provider="dashscope",
-                market_type="A股"
+                llm_provider=quick_provider,
+                market_type="A股",
+                quick_model_config=quick_model_config,
+                deep_model_config=deep_model_config,
+            )
+            config["quick_provider"] = quick_provider
+            config["deep_provider"] = deep_provider
+            config["quick_backend_url"] = quick_provider_info["backend_url"]
+            config["deep_backend_url"] = deep_provider_info["backend_url"]
+            config["backend_url"] = quick_provider_info["backend_url"]
+
+            logger.info(
+                "🔍 [回测模型路由] quick=%s(%s), deep=%s(%s)",
+                quick_model,
+                quick_provider,
+                deep_model,
+                deep_provider,
             )
 
             from tradingagents.graph.trading_graph import TradingAgentsGraph

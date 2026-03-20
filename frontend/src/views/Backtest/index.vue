@@ -93,6 +93,52 @@
               </el-radio-group>
             </el-form-item>
 
+            <!-- AI模型配置 -->
+            <el-form-item label="快速分析模型">
+              <el-select
+                v-model="form.quick_analysis_model"
+                filterable
+                placeholder="选择快速分析模型"
+                style="width: 100%"
+                :loading="loadingModels"
+              >
+                <el-option
+                  v-for="model in availableModels"
+                  :key="`quick-${model.provider}-${model.model_name}`"
+                  :label="modelLabel(model)"
+                  :value="model.model_name"
+                >
+                  <div class="model-option">
+                    <span class="model-option-name">{{ model.model_display_name || model.model_name }}</span>
+                    <span class="model-option-provider">{{ model.provider }}</span>
+                  </div>
+                </el-option>
+              </el-select>
+            </el-form-item>
+
+            <el-form-item label="深度决策模型">
+              <el-select
+                v-model="form.deep_analysis_model"
+                filterable
+                placeholder="选择深度决策模型"
+                style="width: 100%"
+                :loading="loadingModels"
+              >
+                <el-option
+                  v-for="model in availableModels"
+                  :key="`deep-${model.provider}-${model.model_name}`"
+                  :label="modelLabel(model)"
+                  :value="model.model_name"
+                >
+                  <div class="model-option">
+                    <span class="model-option-name">{{ model.model_display_name || model.model_name }}</span>
+                    <span class="model-option-provider">{{ model.provider }}</span>
+                  </div>
+                </el-option>
+              </el-select>
+              <div class="model-hint">不选时会使用系统默认模型；这里可以为本次回测单独指定模型。</div>
+            </el-form-item>
+
             <!-- 回测名称 -->
             <el-form-item label="回测名称（可选）">
               <el-input v-model="form.name" placeholder="为此次回测起个名字" maxlength="50" show-word-limit />
@@ -159,7 +205,7 @@
                 :percentage="task.progress"
                 :stroke-width="4"
                 size="small"
-                status="striped"
+                status="warning"
                 striped-flow
                 :duration="10"
               />
@@ -327,14 +373,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import {
   DataAnalysis, Setting, Search, VideoPlay, Clock, Refresh,
   Loading, Calendar, TrendCharts, List
 } from '@element-plus/icons-vue'
 import { backtestApi, type BacktestTaskStatus, type BacktestResult, type BacktestTaskListItem } from '@/api/backtest'
+import { configApi, type LLMConfig } from '@/api/config'
 
 // ===== 表单状态 =====
 const formRef = ref()
@@ -345,6 +392,8 @@ const form = ref({
   position_ratio_pct: 100,            // 百分比（1-100）
   selected_analysts: ['market', 'fundamentals'],
   research_depth: '快速',
+  quick_analysis_model: '',
+  deep_analysis_model: '',
   name: ''
 })
 
@@ -357,8 +406,10 @@ const rules = {
 const stockName = ref('')
 const loadingName = ref(false)
 const submitting = ref(false)
+const loadingModels = ref(false)
 const route = useRoute()
 const router = useRouter()
+const availableModels = ref<LLMConfig[]>([])
 
 // ===== 任务状态 =====
 const currentTaskId = ref<string | null>(null)
@@ -396,8 +447,8 @@ function disabledDate(d: Date) {
   return d > new Date()
 }
 
-function statusTagType(status: string) {
-  const map: Record<string, string> = {
+function statusTagType(status: string): 'primary' | 'success' | 'warning' | 'info' | 'danger' {
+  const map: Record<string, 'primary' | 'success' | 'warning' | 'info' | 'danger'> = {
     pending: 'info', running: 'warning', completed: 'success', failed: 'danger', cancelled: 'info'
   }
   return map[status] || 'info'
@@ -417,6 +468,32 @@ function formatPct(val: number) {
 function formatMoney(val: number) {
   if (val >= 10000) return (val / 10000).toFixed(2) + '万'
   return val.toFixed(2)
+}
+
+function modelLabel(model: LLMConfig) {
+  const displayName = (model as any).model_display_name || model.model_name
+  return `${displayName} (${model.provider})`
+}
+
+async function initializeModelSettings() {
+  loadingModels.value = true
+  try {
+    const [defaultModels, llmConfigs] = await Promise.all([
+      configApi.getDefaultModels(),
+      configApi.getLLMConfigs()
+    ])
+
+    availableModels.value = llmConfigs.filter((config: any) => config.enabled ?? config.is_active ?? true)
+    form.value.quick_analysis_model = defaultModels.quick_analysis_model || 'qwen-turbo'
+    form.value.deep_analysis_model = defaultModels.deep_analysis_model || 'qwen-max'
+  } catch (error) {
+    console.error('加载回测模型配置失败:', error)
+    form.value.quick_analysis_model = 'qwen-turbo'
+    form.value.deep_analysis_model = 'qwen-max'
+    ElMessage.warning('模型列表加载失败，已回退到默认模型')
+  } finally {
+    loadingModels.value = false
+  }
 }
 
 async function fetchStockName() {
@@ -462,6 +539,8 @@ async function submitBacktest() {
         position_ratio: form.value.position_ratio_pct / 100,
         selected_analysts: form.value.selected_analysts,
         research_depth: form.value.research_depth,
+        quick_analysis_model: form.value.quick_analysis_model || undefined,
+        deep_analysis_model: form.value.deep_analysis_model || undefined,
         name: form.value.name
       }
     })
@@ -618,7 +697,7 @@ function renderChart() {
 
 onMounted(async () => {
   // 恢复历史记录
-  await loadTaskHistory()
+  await Promise.all([loadTaskHistory(), initializeModelSettings()])
   window.addEventListener('resize', () => chartInstance?.resize())
 
   // 如果路由带 task_id（来自任务中心的“查看结果”跳转）,自动加载该任务
@@ -714,6 +793,29 @@ onUnmounted(() => {
 
   .cost-alert {
     margin-bottom: 16px;
+  }
+
+  .model-option {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .model-option-name {
+    flex: 1;
+  }
+
+  .model-option-provider {
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+  }
+
+  .model-hint {
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+    line-height: 1.5;
   }
 
   .submit-btn {

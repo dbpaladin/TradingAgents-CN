@@ -30,13 +30,17 @@ export interface LLMConfig {
   name: string
   provider: string
   model_name: string
+  model_display_name?: string
   api_key?: string  // 可选，优先从厂家配置获取
   base_url?: string
   max_tokens?: number
   temperature?: number
   timeout?: number
+  enabled?: boolean
   is_default?: boolean
   is_active?: boolean
+  capability_level?: number
+  suitable_roles?: string[]
   created_at?: string
   updated_at?: string
 }

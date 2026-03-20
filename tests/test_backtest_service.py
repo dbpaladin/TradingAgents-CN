@@ -14,6 +14,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime
 from bson import ObjectId
+from types import SimpleNamespace
 
 
 # 添加项目根路径
@@ -241,6 +242,93 @@ class TestParseAiDecision:
         decision = {"action": "卖出", "confidence": 0.75}
         action, _, _ = self.engine._parse_ai_decision(decision)
         assert action == TradeAction.SELL
+
+
+class TestBacktestModelRouting:
+    @pytest.mark.asyncio
+    async def test_run_ai_analysis_uses_model_provider_instead_of_hardcoded_dashscope(self):
+        from app.services.backtest_service import BacktestEngine
+
+        task = make_test_task()
+        task.config.quick_analysis_model = "gpt-4o-mini"
+        task.config.deep_analysis_model = "gpt-4o"
+        engine = BacktestEngine(task)
+
+        fake_unified_config = SimpleNamespace(
+            get_quick_analysis_model=lambda: "qwen-turbo",
+            get_deep_analysis_model=lambda: "qwen-max",
+            get_llm_configs=lambda: [
+                SimpleNamespace(
+                    model_name="gpt-4o-mini",
+                    max_tokens=2048,
+                    temperature=0.2,
+                    timeout=90,
+                    retry_times=2,
+                    api_base="https://api.openai.com/v1",
+                ),
+                SimpleNamespace(
+                    model_name="gpt-4o",
+                    max_tokens=4096,
+                    temperature=0.4,
+                    timeout=120,
+                    retry_times=3,
+                    api_base="https://api.openai.com/v1",
+                ),
+            ],
+        )
+
+        captured = {}
+
+        def fake_create_analysis_config(**kwargs):
+            captured["create_kwargs"] = kwargs
+            return {
+                "llm_provider": kwargs["llm_provider"],
+                "quick_think_llm": kwargs["quick_model"],
+                "deep_think_llm": kwargs["deep_model"],
+                "backend_url": "placeholder",
+                "selected_analysts": kwargs["selected_analysts"],
+            }
+
+        class FakeGraph:
+            def __init__(self, selected_analysts, debug, config):
+                captured["graph_config"] = config
+
+            def propagate(self, symbol, date_str):
+                return {}, {"action": "BUY", "confidence": 0.9}
+
+        class FakeLoop:
+            async def run_in_executor(self, executor, func, *args):
+                return func(*args)
+
+        with patch("app.core.unified_config.unified_config", fake_unified_config), \
+             patch("app.services.simple_analysis_service.create_analysis_config", side_effect=fake_create_analysis_config), \
+             patch("app.services.simple_analysis_service.get_provider_and_url_by_model_sync") as mock_provider_lookup, \
+             patch("tradingagents.graph.trading_graph.TradingAgentsGraph", FakeGraph), \
+             patch("asyncio.get_event_loop", return_value=FakeLoop()):
+            mock_provider_lookup.side_effect = [
+                {
+                    "provider": "openai",
+                    "backend_url": "https://api.openai.com/v1",
+                    "api_key": "sk-quick",
+                },
+                {
+                    "provider": "openai",
+                    "backend_url": "https://api.openai.com/v1",
+                    "api_key": "sk-deep",
+                },
+            ]
+
+            decision = await engine._run_ai_analysis("000001", "2026-02-24")
+
+        assert decision["action"] == "BUY"
+        assert captured["create_kwargs"]["llm_provider"] == "openai"
+        assert captured["create_kwargs"]["quick_model_config"]["timeout"] == 90
+        assert captured["graph_config"]["llm_provider"] == "openai"
+        assert captured["graph_config"]["quick_provider"] == "openai"
+        assert captured["graph_config"]["deep_provider"] == "openai"
+        assert captured["graph_config"]["quick_backend_url"] == "https://api.openai.com/v1"
+        assert captured["graph_config"]["deep_backend_url"] == "https://api.openai.com/v1"
+        assert captured["graph_config"]["backend_url"] == "https://api.openai.com/v1"
 
 
 # ===== 测试：绩效指标计算 =====
