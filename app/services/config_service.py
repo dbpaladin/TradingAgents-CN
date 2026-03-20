@@ -5,8 +5,10 @@
 import time
 import asyncio
 import logging
+import json
 from typing import List, Optional, Dict, Any
 from datetime import datetime
+from pathlib import Path
 from app.utils.timezone import now_tz
 from bson import ObjectId
 
@@ -3311,6 +3313,8 @@ class ConfigService:
         import asyncio
 
         try:
+            test_model = await self._resolve_provider_test_model(provider_name)
+
             # 聚合渠道（使用 OpenAI 兼容 API）
             if provider_name in ["302ai", "oneapi", "newapi", "custom_aggregator"]:
                 # 获取厂家的 base_url
@@ -3319,7 +3323,7 @@ class ConfigService:
                 provider_data = await providers_collection.find_one({"name": provider_name})
                 base_url = provider_data.get("default_base_url") if provider_data else None
                 return await asyncio.get_event_loop().run_in_executor(
-                    None, self._test_openai_compatible_api, api_key, display_name, base_url, provider_name
+                    None, self._test_openai_compatible_api, api_key, display_name, base_url, provider_name, test_model
                 )
             elif provider_name == "google":
                 # 获取厂家的 base_url
@@ -3356,13 +3360,46 @@ class ConfigService:
                     }
 
                 return await asyncio.get_event_loop().run_in_executor(
-                    None, self._test_openai_compatible_api, api_key, display_name, base_url, provider_name
+                    None, self._test_openai_compatible_api, api_key, display_name, base_url, provider_name, test_model
                 )
         except Exception as e:
             return {
                 "success": False,
                 "message": f"{display_name} 连接测试失败: {str(e)}"
             }
+
+    async def _resolve_provider_test_model(self, provider_name: str) -> Optional[str]:
+        """为厂家 API 测试选择一个最合适的模型"""
+        try:
+            db = await self._get_db()
+
+            # 1. 优先使用 model_catalog 中该厂家的首个模型
+            catalog = await db.model_catalog.find_one({"provider": provider_name})
+            if catalog:
+                models = catalog.get("models") or []
+                for model in models:
+                    model_name = model.get("name")
+                    if model_name:
+                        logger.info(f"🔍 [{provider_name}] API测试使用目录模型: {model_name}")
+                        return model_name
+
+            # 2. 其次使用 pricing.json 中该厂家的模型
+            pricing_file = Path("config/pricing.json")
+            if pricing_file.exists():
+                try:
+                    pricing_items = json.loads(pricing_file.read_text(encoding="utf-8"))
+                    for item in pricing_items:
+                        if item.get("provider") == provider_name and item.get("model_name"):
+                            model_name = item["model_name"]
+                            logger.info(f"🔍 [{provider_name}] API测试使用定价模型: {model_name}")
+                            return model_name
+                except Exception as e:
+                    logger.debug(f"读取 pricing.json 失败，跳过厂家测试模型解析: {e}")
+
+        except Exception as e:
+            logger.debug(f"解析厂家测试模型失败 provider={provider_name}: {e}")
+
+        return None
 
     def _test_google_api(self, api_key: str, display_name: str, base_url: str = None, model_name: str = None) -> dict:
         """测试Google AI API"""
@@ -4230,7 +4267,14 @@ class ConfigService:
 
         return filtered
 
-    def _test_openai_compatible_api(self, api_key: str, display_name: str, base_url: str = None, provider_name: str = None) -> dict:
+    def _test_openai_compatible_api(
+        self,
+        api_key: str,
+        display_name: str,
+        base_url: str = None,
+        provider_name: str = None,
+        model_name: str = None,
+    ) -> dict:
         """测试 OpenAI 兼容 API（用于聚合渠道和自定义厂家）"""
         try:
             import requests
@@ -4266,8 +4310,10 @@ class ConfigService:
             }
 
             # 🔥 根据不同厂家选择合适的测试模型
-            test_model = "gpt-3.5-turbo"  # 默认模型
-            if provider_name == "siliconflow":
+            test_model = model_name or "gpt-3.5-turbo"
+            if model_name:
+                logger.info(f"🔍 [{display_name}] 使用已配置测试模型: {test_model}")
+            elif provider_name == "siliconflow":
                 # 硅基流动使用免费的 Qwen 模型进行测试
                 test_model = "Qwen/Qwen2.5-7B-Instruct"
                 logger.info(f"🔍 硅基流动使用测试模型: {test_model}")
@@ -4276,8 +4322,7 @@ class ConfigService:
                 test_model = "glm-4"
                 logger.info(f"🔍 智谱AI使用测试模型: {test_model}")
 
-            # 使用一个通用的模型名称进行测试
-            # 聚合渠道通常支持多种模型，这里使用 gpt-3.5-turbo 作为测试
+            logger.info(f"🔍 [{display_name}] OpenAI兼容测试模型: {test_model}")
             data = {
                 "model": test_model,
                 "messages": [
