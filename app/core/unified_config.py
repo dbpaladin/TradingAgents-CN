@@ -92,28 +92,51 @@ class UnifiedConfigManager:
     
     def get_legacy_models(self) -> List[Dict[str, Any]]:
         """获取传统格式的模型配置"""
-        return self._load_json_file(self.paths.models_json, "models")
+        models = self._load_json_file(self.paths.models_json, "models")
+        return models if isinstance(models, list) else []
     
     def get_llm_configs(self) -> List[LLMConfig]:
         """获取标准化的LLM配置"""
         legacy_models = self.get_legacy_models()
         llm_configs = []
+        default_model = self.get_default_model()
 
         for model in legacy_models:
             try:
                 # 直接使用 provider 字符串，不再映射到枚举
                 provider = model.get("provider", "openai")
+                api_base = model.get("api_base", model.get("base_url"))
 
-                # 方案A：敏感密钥不从文件加载，统一走环境变量/厂家目录
                 llm_config = LLMConfig(
                     provider=provider,
                     model_name=model.get("model_name", ""),
+                    model_display_name=model.get("model_display_name"),
+                    is_default=(
+                        model.get("model_name", "") == default_model
+                        if default_model
+                        else bool(model.get("is_default"))
+                    ),
                     api_key="",
-                    api_base=model.get("base_url"),
+                    api_base=api_base,
                     max_tokens=model.get("max_tokens", 4000),
                     temperature=model.get("temperature", 0.7),
+                    timeout=model.get("timeout", 180),
+                    retry_times=model.get("retry_times", 3),
                     enabled=model.get("enabled", True),
-                    description=f"{model.get('provider', '')} {model.get('model_name', '')}"
+                    description=model.get("description") or f"{model.get('provider', '')} {model.get('model_name', '')}",
+                    model_category=model.get("model_category"),
+                    custom_endpoint=model.get("custom_endpoint"),
+                    enable_memory=model.get("enable_memory", False),
+                    enable_debug=model.get("enable_debug", False),
+                    priority=model.get("priority", 0),
+                    input_price_per_1k=model.get("input_price_per_1k"),
+                    output_price_per_1k=model.get("output_price_per_1k"),
+                    currency=model.get("currency", "CNY"),
+                    capability_level=model.get("capability_level", 2),
+                    suitable_roles=model.get("suitable_roles", ["both"]),
+                    features=model.get("features", []),
+                    recommended_depths=model.get("recommended_depths", ["快速", "基础", "标准"]),
+                    performance_metrics=model.get("performance_metrics"),
                 )
                 llm_configs.append(llm_config)
             except Exception as e:
@@ -127,16 +150,34 @@ class UnifiedConfigManager:
         try:
             legacy_models = self.get_legacy_models()
 
-            # 直接使用 provider 字符串，不再需要映射
-            # 方案A：保存到文件时不写入密钥
+            current_default = self.get_default_model()
             legacy_model = {
                 "provider": llm_config.provider,
                 "model_name": llm_config.model_name,
+                "model_display_name": llm_config.model_display_name,
+                "is_default": llm_config.is_default or llm_config.model_name == current_default,
                 "api_key": "",
+                "api_base": llm_config.api_base,
                 "base_url": llm_config.api_base,
                 "max_tokens": llm_config.max_tokens,
                 "temperature": llm_config.temperature,
-                "enabled": llm_config.enabled
+                "timeout": llm_config.timeout,
+                "retry_times": llm_config.retry_times,
+                "enabled": llm_config.enabled,
+                "description": llm_config.description,
+                "model_category": llm_config.model_category,
+                "custom_endpoint": llm_config.custom_endpoint,
+                "enable_memory": llm_config.enable_memory,
+                "enable_debug": llm_config.enable_debug,
+                "priority": llm_config.priority,
+                "input_price_per_1k": llm_config.input_price_per_1k,
+                "output_price_per_1k": llm_config.output_price_per_1k,
+                "currency": llm_config.currency,
+                "capability_level": llm_config.capability_level,
+                "suitable_roles": llm_config.suitable_roles,
+                "features": llm_config.features,
+                "recommended_depths": llm_config.recommended_depths,
+                "performance_metrics": llm_config.performance_metrics,
             }
             
             # 查找并更新现有配置，或添加新配置
@@ -150,7 +191,11 @@ class UnifiedConfigManager:
             
             if not updated:
                 legacy_models.append(legacy_model)
-            
+
+            if current_default:
+                for model in legacy_models:
+                    model["is_default"] = model.get("model_name") == current_default
+
             self._save_json_file(self.paths.models_json, legacy_models, "models")
             return True
             
@@ -192,6 +237,10 @@ class UnifiedConfigManager:
             print(f"🔀 [unified_config] 合并后配置包含 {len(merged_settings)} 项")
 
             # 添加字段名映射（新字段名 -> 旧字段名）
+            if "default_llm" in settings:
+                merged_settings["default_model"] = settings["default_llm"]
+                print(f"  ✓ [unified_config] 映射 default_llm -> default_model: {settings['default_llm']}")
+
             if "quick_analysis_model" in settings:
                 merged_settings["quick_think_llm"] = settings["quick_analysis_model"]
                 print(f"  ✓ [unified_config] 映射 quick_analysis_model -> quick_think_llm: {settings['quick_analysis_model']}")
@@ -226,26 +275,30 @@ class UnifiedConfigManager:
     def get_default_model(self) -> str:
         """获取默认模型（向后兼容）"""
         settings = self.get_system_settings()
-        # 优先返回快速分析模型，保持向后兼容
-        return settings.get("quick_analysis_model", settings.get("default_model", "qwen-turbo"))
+        return (
+            settings.get("default_llm")
+            or settings.get("default_model")
+            or settings.get("quick_analysis_model")
+            or settings.get("quick_think_llm")
+            or "qwen-turbo"
+        )
 
     def set_default_model(self, model_name: str) -> bool:
         """设置默认模型（向后兼容）"""
         settings = self.get_system_settings()
-        settings["quick_analysis_model"] = model_name
+        settings["default_llm"] = model_name
+        settings["default_model"] = model_name
         return self.save_system_settings(settings)
 
     def get_quick_analysis_model(self) -> str:
         """获取快速分析模型"""
         settings = self.get_system_settings()
-        # 优先读取新字段名，如果不存在则读取旧字段名（向后兼容）
-        return settings.get("quick_analysis_model") or settings.get("quick_think_llm", "qwen-turbo")
+        return settings.get("quick_analysis_model") or settings.get("quick_think_llm") or self.get_default_model()
 
     def get_deep_analysis_model(self) -> str:
         """获取深度分析模型"""
         settings = self.get_system_settings()
-        # 优先读取新字段名，如果不存在则读取旧字段名（向后兼容）
-        return settings.get("deep_analysis_model") or settings.get("deep_think_llm", "qwen-max")
+        return settings.get("deep_analysis_model") or settings.get("deep_think_llm") or self.get_default_model()
 
     def set_analysis_models(self, quick_model: str, deep_model: str) -> bool:
         """设置分析模型"""
@@ -486,6 +539,7 @@ class UnifiedConfigManager:
                 settings["deep_analysis_model"] = system_config.system_settings["deep_analysis_model"]
 
             if system_config.default_llm:
+                settings["default_llm"] = system_config.default_llm
                 settings["default_model"] = system_config.default_llm
 
             self.save_system_settings(settings)

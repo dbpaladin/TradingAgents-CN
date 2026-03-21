@@ -4,6 +4,7 @@ import json
 
 # 导入统一日志系统
 from tradingagents.utils.logging_init import get_logger
+from tradingagents.agents.utils.prompt_context import compact_history, compact_text
 logger = get_logger("default")
 
 
@@ -17,21 +18,39 @@ def create_safe_debator(llm):
         current_neutral_response = risk_debate_state.get("current_neutral_response", "")
 
         market_research_report = state["market_report"]
+        a_share_sentiment_report = state.get("a_share_sentiment_report", "")
+        theme_rotation_report = state.get("theme_rotation_report", "")
+        institutional_theme_report = state.get("institutional_theme_report", "")
         sentiment_report = state["sentiment_report"]
         news_report = state["news_report"]
         fundamentals_report = state["fundamentals_report"]
 
         trader_decision = state["trader_investment_plan"]
 
+        market_research_report = compact_text(market_research_report, 1400, "safe.market_report")
+        a_share_sentiment_report = compact_text(a_share_sentiment_report, 900, "safe.a_share_sentiment")
+        theme_rotation_report = compact_text(theme_rotation_report, 900, "safe.theme_rotation")
+        institutional_theme_report = compact_text(institutional_theme_report, 900, "safe.institutional_theme")
+        sentiment_report = compact_text(sentiment_report, 600, "safe.sentiment")
+        news_report = compact_text(news_report, 800, "safe.news")
+        fundamentals_report = compact_text(fundamentals_report, 1000, "safe.fundamentals")
+        trader_decision = compact_text(trader_decision, 1000, "safe.trader_decision")
+        history = compact_history(history, 1000, "safe.history")
+        current_risky_response = compact_text(current_risky_response, 700, "safe.current_risky")
+        current_neutral_response = compact_text(current_neutral_response, 700, "safe.current_neutral")
+
         # 📊 记录输入数据长度
         logger.info(f"📊 [Safe Analyst] 输入数据长度统计:")
         logger.info(f"  - market_report: {len(market_research_report):,} 字符")
+        logger.info(f"  - a_share_sentiment_report: {len(a_share_sentiment_report):,} 字符")
+        logger.info(f"  - theme_rotation_report: {len(theme_rotation_report):,} 字符")
+        logger.info(f"  - institutional_theme_report: {len(institutional_theme_report):,} 字符")
         logger.info(f"  - sentiment_report: {len(sentiment_report):,} 字符")
         logger.info(f"  - news_report: {len(news_report):,} 字符")
         logger.info(f"  - fundamentals_report: {len(fundamentals_report):,} 字符")
         logger.info(f"  - trader_decision: {len(trader_decision):,} 字符")
         logger.info(f"  - history: {len(history):,} 字符")
-        total_length = (len(market_research_report) + len(sentiment_report) +
+        total_length = (len(market_research_report) + len(a_share_sentiment_report) + len(theme_rotation_report) + len(institutional_theme_report) + len(sentiment_report) +
                        len(news_report) + len(fundamentals_report) +
                        len(trader_decision) + len(history) +
                        len(current_risky_response) + len(current_neutral_response))
@@ -44,6 +63,9 @@ def create_safe_debator(llm):
 您的任务是积极反驳激进和中性分析师的论点，突出他们的观点可能忽视的潜在威胁或未能优先考虑可持续性的地方。直接回应他们的观点，利用以下数据来源为交易员决策的低风险方法调整建立令人信服的案例：
 
 市场研究报告：{market_research_report}
+A股盘面情绪报告：{a_share_sentiment_report}
+A股题材轮动报告：{theme_rotation_report}
+机构布局题材报告：{institutional_theme_report}
 社交媒体情绪报告：{sentiment_report}
 最新世界事务报告：{news_report}
 公司基本面报告：{fundamentals_report}

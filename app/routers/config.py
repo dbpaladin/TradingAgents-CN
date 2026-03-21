@@ -948,12 +948,16 @@ async def get_llm_configs(
         # 获取所有供应商信息，用于过滤被禁用供应商的模型
         providers = await config_service.get_llm_providers()
         active_provider_names = {p.name for p in providers if p.is_active}
+        default_llm = getattr(config, "default_llm", None)
 
         # 过滤：只返回启用的模型 且 供应商也启用的模型
         filtered_configs = [
             llm_config for llm_config in config.llm_configs
             if llm_config.enabled and llm_config.provider in active_provider_names
         ]
+
+        for llm_config in filtered_configs:
+            llm_config.is_default = llm_config.model_name == default_llm
 
         logger.info(f"✅ 过滤后的大模型配置数量: {len(filtered_configs)} (原始: {len(config.llm_configs)})")
 

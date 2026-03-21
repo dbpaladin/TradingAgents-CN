@@ -185,6 +185,9 @@ class RedisProgressTracker:
         """获取分析师步骤信息（名称与描述）"""
         mapping = {
             'market': {"name": "📊 市场分析师", "description": "分析股价走势、成交量、技术指标等市场表现"},
+            'emotion': {"name": "🔥 A股情绪分析师", "description": "分析涨停梯队、炸板率、连板高度、情绪周期等盘面信号"},
+            'theme_rotation': {"name": "🧭 题材轮动分析师", "description": "分析主线题材、板块轮动、龙头梯队和目标股题材定位"},
+            'institutional_theme': {"name": "🏦 机构布局题材分析师", "description": "识别机构酝酿/试盘的候选题材与提前布局机会"},
             'fundamentals': {"name": "💼 基本面分析师", "description": "分析公司财务状况、盈利能力、成长性等基本面"},
             'news': {"name": "📰 新闻分析师", "description": "分析相关新闻、公告、行业动态对股价的影响"},
             'social': {"name": "💬 社交媒体分析师", "description": "分析社交媒体讨论、网络热度、散户情绪等"},

@@ -1128,7 +1128,8 @@ def render_results_comparison(results: List[Dict[str, Any]]):
     comparison_fields = [
         ('market_report', '📈 市场技术分析'),
         ('fundamentals_report', '💰 基本面分析'),
-        ('sentiment_report', '💭 市场情绪分析'),
+        ('a_share_sentiment_report', '🔥 A股盘面情绪'),
+        ('sentiment_report', '💬 公共舆情分析'),
         ('news_report', '📰 新闻事件分析'),
         ('risk_assessment', '⚠️ 风险评估'),
         ('investment_plan', '📋 投资建议'),
@@ -1376,10 +1377,16 @@ def render_detailed_analysis_content(selected_result):
             'description': '财务数据、估值水平、盈利能力分析'
         },
         {
+            'key': 'a_share_sentiment_report',
+            'title': '🔥 A股盘面情绪',
+            'icon': '🔥',
+            'description': '涨停梯队、炸板率、连板高度与情绪周期分析'
+        },
+        {
             'key': 'sentiment_report',
-            'title': '💭 市场情绪分析',
-            'icon': '💭',
-            'description': '投资者情绪、社交媒体情绪指标'
+            'title': '💬 公共舆情分析',
+            'icon': '💬',
+            'description': '投资者舆情、社交媒体和新闻情绪指标'
         },
         {
             'key': 'news_report',
@@ -1715,7 +1722,8 @@ def show_expanded_detail(result):
                     analysis_fields = [
                         ('market_report', '📈 市场分析'),
                         ('fundamentals_report', '💰 基本面分析'),
-                        ('sentiment_report', '💭 情感分析'),
+                        ('a_share_sentiment_report', '🔥 A股盘面情绪'),
+                        ('sentiment_report', '💬 公共舆情分析'),
                         ('news_report', '📰 新闻分析'),
                         ('risk_assessment', '⚠️ 风险评估'),
                         ('investment_plan', '📋 投资建议'),

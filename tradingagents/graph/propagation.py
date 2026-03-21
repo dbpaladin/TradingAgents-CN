@@ -46,6 +46,9 @@ class Propagator:
                 }
             ),
             "market_report": "",
+            "a_share_sentiment_report": "",
+            "theme_rotation_report": "",
+            "institutional_theme_report": "",
             "fundamentals_report": "",
             "sentiment_report": "",
             "news_report": "",

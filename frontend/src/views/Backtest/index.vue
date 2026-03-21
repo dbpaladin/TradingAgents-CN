@@ -81,6 +81,8 @@
                 <el-checkbox label="market">市场分析</el-checkbox>
                 <el-checkbox label="fundamentals">基本面</el-checkbox>
                 <el-checkbox label="sentiment">情绪面</el-checkbox>
+                <el-checkbox label="theme_rotation">题材轮动</el-checkbox>
+                <el-checkbox label="institutional_theme">机构布局题材</el-checkbox>
                 <el-checkbox label="news">新闻</el-checkbox>
               </el-checkbox-group>
             </el-form-item>

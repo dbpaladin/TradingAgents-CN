@@ -128,7 +128,8 @@
                     class="analyst-card"
                     :class="{ 
                       active: analysisForm.selectedAnalysts.includes(analyst.name),
-                      disabled: analyst.name === '社媒分析师' && analysisForm.market === 'A股'
+                      disabled: (analyst.name === '社媒分析师' && analysisForm.market === 'A股')
+                        || (analyst.name === 'A股情绪分析师' && analysisForm.market !== 'A股')
                     }"
                     @click="toggleAnalyst(analyst.name)"
                   >
@@ -153,6 +154,13 @@
                 <el-alert
                   v-if="analysisForm.market === 'A股'"
                   title="A股市场暂不支持社媒分析（国内数据源限制）"
+                  type="info"
+                  :closable="false"
+                  style="margin-top: 12px"
+                />
+                <el-alert
+                  v-else
+                  title="A股情绪分析师仅支持A股市场"
                   type="info"
                   :closable="false"
                   style="margin-top: 12px"
@@ -784,8 +792,8 @@ const generateStepsFromBackend = (backendSteps: any[]) => {
 
 // 模型设置
 const modelSettings = ref({
-  quickAnalysisModel: 'qwen-turbo',
-  deepAnalysisModel: 'qwen-max'
+  quickAnalysisModel: '',
+  deepAnalysisModel: ''
 })
 
 // 可用的模型列表（从配置中获取）
@@ -894,6 +902,9 @@ const fetchStockInfo = () => {
 // 切换分析师
 const toggleAnalyst = (analystName: string) => {
   if (analystName === '社媒分析师' && analysisForm.market === 'A股') {
+    return
+  }
+  if (analystName === 'A股情绪分析师' && analysisForm.market !== 'A股') {
     return
   }
 
@@ -1262,9 +1273,10 @@ const getAnalysisReports = (data: any) => {
 
   // 定义报告映射（按照完整的分析流程顺序）
   const reportMappings = [
-    // 分析师团队 (4个)
+    // 分析师团队
     { key: 'market_report', title: '📈 市场技术分析', category: '分析师团队' },
-    { key: 'sentiment_report', title: '💭 市场情绪分析', category: '分析师团队' },
+    { key: 'a_share_sentiment_report', title: '🔥 A股盘面情绪', category: '分析师团队' },
+    { key: 'sentiment_report', title: '💬 公共舆情分析', category: '分析师团队' },
     { key: 'news_report', title: '📰 新闻事件分析', category: '分析师团队' },
     { key: 'fundamentals_report', title: '💰 基本面分析', category: '分析师团队' },
 

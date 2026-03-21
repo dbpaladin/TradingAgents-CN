@@ -3,6 +3,7 @@ import json
 
 # 导入统一日志系统
 from tradingagents.utils.logging_init import get_logger
+from tradingagents.agents.utils.prompt_context import compact_history, compact_text
 logger = get_logger("default")
 
 
@@ -16,15 +17,33 @@ def create_neutral_debator(llm):
         current_safe_response = risk_debate_state.get("current_safe_response", "")
 
         market_research_report = state["market_report"]
+        a_share_sentiment_report = state.get("a_share_sentiment_report", "")
+        theme_rotation_report = state.get("theme_rotation_report", "")
+        institutional_theme_report = state.get("institutional_theme_report", "")
         sentiment_report = state["sentiment_report"]
         news_report = state["news_report"]
         fundamentals_report = state["fundamentals_report"]
 
         trader_decision = state["trader_investment_plan"]
 
+        market_research_report = compact_text(market_research_report, 1400, "neutral.market_report")
+        a_share_sentiment_report = compact_text(a_share_sentiment_report, 900, "neutral.a_share_sentiment")
+        theme_rotation_report = compact_text(theme_rotation_report, 900, "neutral.theme_rotation")
+        institutional_theme_report = compact_text(institutional_theme_report, 900, "neutral.institutional_theme")
+        sentiment_report = compact_text(sentiment_report, 600, "neutral.sentiment")
+        news_report = compact_text(news_report, 800, "neutral.news")
+        fundamentals_report = compact_text(fundamentals_report, 1000, "neutral.fundamentals")
+        trader_decision = compact_text(trader_decision, 1000, "neutral.trader_decision")
+        history = compact_history(history, 1000, "neutral.history")
+        current_risky_response = compact_text(current_risky_response, 700, "neutral.current_risky")
+        current_safe_response = compact_text(current_safe_response, 700, "neutral.current_safe")
+
         # 📊 记录所有输入数据的长度，用于性能分析
         logger.info(f"📊 [Neutral Analyst] 输入数据长度统计:")
         logger.info(f"  - market_report: {len(market_research_report):,} 字符 (~{len(market_research_report)//4:,} tokens)")
+        logger.info(f"  - a_share_sentiment_report: {len(a_share_sentiment_report):,} 字符 (~{len(a_share_sentiment_report)//4:,} tokens)")
+        logger.info(f"  - theme_rotation_report: {len(theme_rotation_report):,} 字符 (~{len(theme_rotation_report)//4:,} tokens)")
+        logger.info(f"  - institutional_theme_report: {len(institutional_theme_report):,} 字符 (~{len(institutional_theme_report)//4:,} tokens)")
         logger.info(f"  - sentiment_report: {len(sentiment_report):,} 字符 (~{len(sentiment_report)//4:,} tokens)")
         logger.info(f"  - news_report: {len(news_report):,} 字符 (~{len(news_report)//4:,} tokens)")
         logger.info(f"  - fundamentals_report: {len(fundamentals_report):,} 字符 (~{len(fundamentals_report)//4:,} tokens)")
@@ -34,7 +53,7 @@ def create_neutral_debator(llm):
         logger.info(f"  - current_safe_response: {len(current_safe_response):,} 字符 (~{len(current_safe_response)//4:,} tokens)")
 
         # 计算总prompt长度
-        total_prompt_length = (len(market_research_report) + len(sentiment_report) +
+        total_prompt_length = (len(market_research_report) + len(a_share_sentiment_report) + len(theme_rotation_report) + len(institutional_theme_report) + len(sentiment_report) +
                               len(news_report) + len(fundamentals_report) +
                               len(trader_decision) + len(history) +
                               len(current_risky_response) + len(current_safe_response))
@@ -47,6 +66,9 @@ def create_neutral_debator(llm):
 您的任务是挑战激进和安全分析师，指出每种观点可能过于乐观或过于谨慎的地方。使用以下数据来源的见解来支持调整交易员决策的温和、可持续策略：
 
 市场研究报告：{market_research_report}
+A股盘面情绪报告：{a_share_sentiment_report}
+A股题材轮动报告：{theme_rotation_report}
+机构布局题材报告：{institutional_theme_report}
 社交媒体情绪报告：{sentiment_report}
 最新世界事务报告：{news_report}
 公司基本面报告：{fundamentals_report}

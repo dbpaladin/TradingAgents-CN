@@ -30,6 +30,24 @@ export const ANALYSTS: Analyst[] = [
     icon: 'Document'
   },
   {
+    id: 'emotion',
+    name: 'A股情绪分析师',
+    description: '分析涨停梯队、炸板率、连板高度和情绪周期',
+    icon: 'Lightning'
+  },
+  {
+    id: 'theme_rotation',
+    name: '题材轮动分析师',
+    description: '分析主线题材、板块轮动、龙头梯队和个股题材定位',
+    icon: 'Compass'
+  },
+  {
+    id: 'institutional_theme',
+    name: '机构布局题材分析师',
+    description: '识别机构酝酿/试盘的候选题材和提前布局机会',
+    icon: 'Histogram'
+  },
+  {
     id: 'social',
     name: '社媒分析师',
     description: '分析社交媒体情绪、投资者心理和舆论导向',
@@ -63,6 +81,9 @@ export const ANALYST_NAME_TO_ID_MAP: Record<string, string> = {
   '市场分析师': 'market',
   '基本面分析师': 'fundamentals',
   '新闻分析师': 'news',
+  'A股情绪分析师': 'emotion',
+  '题材轮动分析师': 'theme_rotation',
+  '机构布局题材分析师': 'institutional_theme',
   '社媒分析师': 'social'
 }
 

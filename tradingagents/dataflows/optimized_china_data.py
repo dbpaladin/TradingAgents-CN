@@ -7,6 +7,7 @@
 import os
 import time
 import random
+import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -253,8 +254,8 @@ class OptimizedChinaDataProvider:
 
             # 保存到缓存
             self.cache.save_fundamentals_data(
-                symbol=symbol,
-                fundamentals_data=fundamentals_data,
+                symbol,
+                fundamentals_data,
                 data_source="unified_analysis"  # 统一数据源分析
             )
 
@@ -424,17 +425,22 @@ class OptimizedChinaDataProvider:
         industry_info = self._get_industry_info(symbol)
         logger.debug(f"🔍 [股票代码追踪] _get_industry_info 返回结果: {industry_info}")
 
-        # 尝试获取财务指标，如果失败则返回简化的基本面报告
+        # 尝试获取财务指标，如果失败则回退到字段级降级，而不是整段缺失
         logger.debug(f"🔍 [股票代码追踪] 调用 _estimate_financial_metrics，传入参数: '{symbol}'")
         try:
             financial_estimates = self._estimate_financial_metrics(symbol, current_price)
             logger.debug(f"🔍 [股票代码追踪] _estimate_financial_metrics 返回结果: {financial_estimates}")
         except Exception as e:
             logger.warning(f"⚠️ [基本面分析] 无法获取财务指标: {e}")
-            logger.info(f"📊 [基本面分析] 返回简化的基本面报告（无财务指标）")
+            partial_financial_estimates = self._get_partial_financial_estimates(symbol, current_price)
+            if partial_financial_estimates:
+                financial_estimates = partial_financial_estimates
+                logger.info(f"📊 [基本面分析] 使用字段级降级财务数据继续生成报告: {symbol}")
+            else:
+                logger.info(f"📊 [基本面分析] 返回简化的基本面报告（无财务指标）")
 
-            # 返回简化的基本面报告（不包含财务指标）
-            simplified_report = f"""# 中国A股基本面分析报告 - {symbol} (简化版)
+                # 返回简化的基本面报告（不包含财务指标）
+                simplified_report = f"""# 中国A股基本面分析报告 - {symbol} (简化版)
 
 ## 📊 基本信息
 - **股票代码**: {symbol}
@@ -458,7 +464,7 @@ class OptimizedChinaDataProvider:
 **生成时间**: {datetime.now(ZoneInfo(get_timezone_name())).strftime('%Y-%m-%d %H:%M:%S')}
 **数据来源**: 基础市场数据
 """
-            return simplified_report.strip()
+                return simplified_report.strip()
 
         logger.debug(f"🔍 [股票代码追踪] 开始生成报告，使用股票代码: '{symbol}'")
 
@@ -472,6 +478,8 @@ class OptimizedChinaDataProvider:
             data_source_note = "\n✅ **数据说明**: 财务指标基于AKShare真实财务数据计算"
         elif data_source == "Tushare":
             data_source_note = "\n✅ **数据说明**: 财务指标基于Tushare真实财务数据计算"
+        elif data_source == "partial_real_data":
+            data_source_note = "\n⚠️ **数据说明**: 财务指标已尽可能使用真实缓存/快照补齐，缺失字段按单项降级处理"
         else:
             data_source_note = "\n✅ **数据说明**: 财务指标基于真实财务数据计算"
 
@@ -543,14 +551,14 @@ class OptimizedChinaDataProvider:
 - **现金比率**: {financial_estimates['cash_ratio']}
 
 ## 📈 行业分析
-{industry_info['analysis']}
+{self._generate_industry_analysis(industry_info, financial_estimates)}
 
 ## 🎯 投资价值评估
 ### 估值水平分析
 {self._analyze_valuation(financial_estimates)}
 
 ### 成长性分析
-{self._analyze_growth_potential(symbol, industry_info)}
+{self._analyze_growth_potential(symbol, industry_info, financial_estimates)}
 
 ## 💡 投资建议
 - **基本面评分**: {financial_estimates['fundamental_score']}/10
@@ -604,7 +612,7 @@ class OptimizedChinaDataProvider:
 ## 📈 行业分析
 
 ### 行业地位
-{industry_info['analysis']}
+{self._generate_industry_analysis(industry_info, financial_estimates)}
 
 ### 竞争优势
 - **市场份额**: {industry_info['market_share']}
@@ -617,7 +625,7 @@ class OptimizedChinaDataProvider:
 {self._analyze_valuation(financial_estimates)}
 
 ### 成长性分析
-{self._analyze_growth_potential(symbol, industry_info)}
+{self._analyze_growth_potential(symbol, industry_info, financial_estimates)}
 
 ### 风险评估
 {self._analyze_risks(symbol, financial_estimates, industry_info)}
@@ -709,6 +717,12 @@ class OptimizedChinaDataProvider:
                         industry_val = sec_or_cat
                     logger.debug(f"🔧 [字段归一化] industry原值='{raw_industry}' → 行业='{industry_val}', 市场/板块='{market_val}'")
 
+                if self._is_placeholder_industry(industry_val):
+                    tushare_industry = self._get_tushare_industry(symbol)
+                    if tushare_industry:
+                        industry_val = tushare_industry
+                        logger.info(f"✅ [行业识别] 使用 Tushare 行业补齐: {symbol} -> {industry_val}")
+
                 # 构建行业信息
                 info = {
                     "industry": industry_val or '未知',
@@ -778,6 +792,131 @@ class OptimizedChinaDataProvider:
 
         return info
 
+    def _is_placeholder_industry(self, value: Optional[str]) -> bool:
+        text = str(value or "").strip().lower()
+        if not text:
+            return True
+        return text in {"未知", "unknown", "n/a", "none", "stock_cn", "a_shares", "cn_stock"}
+
+    def _get_tushare_industry(self, symbol: str) -> Optional[str]:
+        """当缓存中的行业字段为空或占位时，尝试从 Tushare 基础信息补齐。"""
+        try:
+            from tradingagents.dataflows.providers.china.tushare import get_tushare_provider
+            import asyncio
+
+            provider = get_tushare_provider()
+            if not getattr(provider, "connected", False):
+                return None
+
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    new_loop = asyncio.new_event_loop()
+                    try:
+                        info = new_loop.run_until_complete(provider.get_stock_basic_info(symbol))
+                    finally:
+                        new_loop.close()
+                else:
+                    info = loop.run_until_complete(provider.get_stock_basic_info(symbol))
+            except RuntimeError:
+                new_loop = asyncio.new_event_loop()
+                try:
+                    asyncio.set_event_loop(new_loop)
+                    info = new_loop.run_until_complete(provider.get_stock_basic_info(symbol))
+                finally:
+                    new_loop.close()
+
+            industry = (info or {}).get("industry")
+            if self._is_placeholder_industry(industry):
+                return None
+            return str(industry).strip()
+        except Exception as e:
+            logger.debug(f"🔍 [行业识别] Tushare 行业补齐失败: {symbol} - {e}")
+            return None
+
+    def _extract_number(self, value: Any) -> Optional[float]:
+        try:
+            if value is None:
+                return None
+            if isinstance(value, (int, float)):
+                return float(value)
+            text = str(value).strip()
+            if not text or text in {"N/A", "--", "待分析", "待查询"}:
+                return None
+            text = text.replace(",", "")
+            match = re.search(r"-?\d+(?:\.\d+)?", text)
+            return float(match.group(0)) if match else None
+        except Exception:
+            return None
+
+    def _format_ratio_value(self, value: Optional[float], decimals: int = 2) -> str:
+        if value is None:
+            return "N/A"
+        return f"{value:.{decimals}f}"
+
+    def _format_percent_value(self, value: Optional[float], decimals: int = 2) -> str:
+        if value is None:
+            return "N/A"
+        return f"{value:.{decimals}f}%"
+
+    def _calculate_ps_from_market_cap_yi(self, market_cap_yi: Optional[float], revenue_value: Optional[float]) -> Optional[float]:
+        """
+        根据市值(亿元)和营收值自动推断单位计算 PS。
+        优先假设营收单位为元，其次万元，最后亿元。
+        """
+        if not market_cap_yi or market_cap_yi <= 0 or not revenue_value or revenue_value <= 0:
+            return None
+
+        revenue_yi_candidates = []
+        if revenue_value >= 1e8:
+            revenue_yi_candidates.append(revenue_value / 1e8)  # 原始值为元
+        if revenue_value >= 1e4:
+            revenue_yi_candidates.append(revenue_value / 1e4)  # 原始值为万元
+        revenue_yi_candidates.append(revenue_value)  # 原始值已是亿元
+
+        for revenue_yi in revenue_yi_candidates:
+            if revenue_yi and revenue_yi > 0:
+                ps = market_cap_yi / revenue_yi
+                if 0 < ps < 1000:
+                    return ps
+        return None
+
+    def _get_market_cap_yi_from_metrics(self, metrics: dict, stock_info: Optional[dict] = None) -> Optional[float]:
+        total_mv = self._extract_number(metrics.get("total_mv"))
+        if total_mv and total_mv > 0:
+            return total_mv
+
+        if stock_info:
+            total_mv_stock = self._extract_number(stock_info.get("total_mv"))
+            if total_mv_stock and total_mv_stock > 0:
+                return total_mv_stock
+
+        return None
+
+    def _get_dividend_yield_from_sources(self, symbol: str, stock_info: Optional[dict] = None) -> str:
+        for key in ("dv_ratio", "dv_ttm", "dividend_yield"):
+            value = self._extract_number((stock_info or {}).get(key))
+            if value is not None and value >= 0:
+                return self._format_percent_value(value, 2)
+
+        try:
+            from tradingagents.dataflows.providers.china.tushare import get_tushare_provider
+
+            provider = get_tushare_provider()
+            if getattr(provider, "connected", False) and getattr(provider, "api", None) is not None:
+                ts_code = provider._normalize_ts_code(symbol)
+                df = provider.api.daily_basic(ts_code=ts_code, fields='ts_code,trade_date,dv_ratio,dv_ttm')
+                if df is not None and not df.empty:
+                    row = df.sort_values('trade_date').iloc[-1]
+                    for key in ("dv_ttm", "dv_ratio"):
+                        value = self._extract_number(row.get(key))
+                        if value is not None and value >= 0:
+                            return self._format_percent_value(value, 2)
+        except Exception as e:
+            logger.debug(f"🔍 [股息率] Tushare 股息率补齐失败: {symbol} - {e}")
+
+        return "N/A"
+
     def _get_market_type_by_code(self, symbol: str) -> str:
         """根据股票代码判断市场类型"""
         code_prefix = symbol[:3]
@@ -840,6 +979,135 @@ class OptimizedChinaDataProvider:
         error_msg = f"无法获取股票 {symbol} 的财务数据。已尝试所有数据源（MongoDB、AKShare、Tushare）均失败。"
         logger.error(f"❌ {error_msg}")
         raise ValueError(error_msg)
+
+    def _get_partial_financial_estimates(self, symbol: str, current_price: str) -> Optional[dict]:
+        """
+        字段级降级获取财务指标。
+
+        与其因为部分字段失败直接整段回退，不如尽可能输出已知估值/盈利/杠杆信息，
+        将缺失项标记为 N/A。
+        """
+        try:
+            try:
+                price_value = float(str(current_price).replace('¥', '').replace(',', ''))
+            except Exception:
+                price_value = 10.0
+
+            metrics = {
+                "total_mv": "N/A",
+                "pe": "N/A",
+                "pe_ttm": "N/A",
+                "pb": "N/A",
+                "ps": "N/A",
+                "dividend_yield": "N/A",
+                "roe": "N/A",
+                "roa": "N/A",
+                "gross_margin": "N/A",
+                "net_margin": "N/A",
+                "debt_ratio": "N/A",
+                "current_ratio": "N/A",
+                "quick_ratio": "N/A",
+                "cash_ratio": "N/A",
+                "fundamental_score": 5.5,
+                "valuation_score": 5.0,
+                "growth_score": 5.0,
+                "risk_level": "中等",
+                "data_source": "partial_real_data",
+            }
+            financial_data = None
+
+            # 1. 优先尝试解析 MongoDB 标准化财务数据
+            try:
+                adapter = get_mongodb_cache_adapter()
+                financial_data = adapter.get_financial_data(symbol) if adapter.use_app_cache else None
+                if financial_data:
+                    parsed = self._parse_mongodb_financial_data(financial_data, price_value)
+                    if parsed:
+                        metrics.update({k: v for k, v in parsed.items() if v not in (None, "", "待查询", "待分析")})
+            except Exception as e:
+                logger.debug(f"🔍 [基本面降级] MongoDB 财务数据补齐失败: {e}")
+
+            # 2. 再尝试读取基础快照，补齐 pe/pb/roe/市值
+            try:
+                from tradingagents.dataflows.providers.china.fundamentals_snapshot import get_cn_fund_snapshot
+
+                snapshot = get_cn_fund_snapshot(symbol)
+                if snapshot:
+                    pe = snapshot.get("pe")
+                    pb = snapshot.get("pb")
+                    roe = snapshot.get("roe")
+                    market_cap = snapshot.get("market_cap")
+
+                    if pe and pe > 0 and metrics.get("pe") == "N/A":
+                        metrics["pe"] = f"{pe:.1f}倍"
+                    if pb and pb > 0 and metrics.get("pb") == "N/A":
+                        metrics["pb"] = f"{pb:.2f}倍"
+                    if roe is not None and metrics.get("roe") == "N/A":
+                        metrics["roe"] = f"{float(roe):.1f}%"
+                    if market_cap and market_cap > 0 and metrics.get("total_mv") == "N/A":
+                        metrics["total_mv"] = f"{market_cap / 10000:.2f}亿元"
+            except Exception as e:
+                logger.debug(f"🔍 [基本面降级] 基本面快照补齐失败: {e}")
+
+            # 3. 最后尝试从基础信息补齐静态估值字段
+            try:
+                adapter = get_mongodb_cache_adapter()
+                stock_info = adapter.get_stock_basic_info(symbol) if adapter.use_app_cache else None
+                if stock_info:
+                    pe_static = stock_info.get("pe")
+                    pe_ttm_static = stock_info.get("pe_ttm")
+                    pb_static = stock_info.get("pb") or stock_info.get("pb_mrq")
+                    total_mv_static = stock_info.get("total_mv")
+
+                    if pe_static not in (None, "", "--") and metrics.get("pe") == "N/A":
+                        pe_float = float(pe_static)
+                        if pe_float > 0:
+                            metrics["pe"] = f"{pe_float:.1f}倍"
+                    if pe_ttm_static not in (None, "", "--") and metrics.get("pe_ttm") == "N/A":
+                        pe_ttm_float = float(pe_ttm_static)
+                        if pe_ttm_float > 0:
+                            metrics["pe_ttm"] = f"{pe_ttm_float:.1f}倍"
+                    if pb_static not in (None, "", "--") and metrics.get("pb") == "N/A":
+                        pb_float = float(pb_static)
+                        if pb_float > 0:
+                            metrics["pb"] = f"{pb_float:.2f}倍"
+                    if total_mv_static not in (None, "", "--") and metrics.get("total_mv") == "N/A":
+                        total_mv_float = float(total_mv_static)
+                        if total_mv_float > 0:
+                            metrics["total_mv"] = f"{total_mv_float:.2f}亿元"
+                    metrics["dividend_yield"] = self._get_dividend_yield_from_sources(symbol, stock_info)
+
+                market_cap_yi = self._get_market_cap_yi_from_metrics(metrics, stock_info)
+                revenue_value = None
+                if financial_data:
+                    revenue_value = financial_data.get("revenue_ttm") or financial_data.get("revenue")
+                    cash_ratio_value = financial_data.get("cash_ratio")
+                    revenue_growth_value = financial_data.get("revenue_growth")
+                    profit_growth_value = financial_data.get("profit_growth")
+                    if cash_ratio_value is not None and metrics.get("cash_ratio") == "N/A":
+                        metrics["cash_ratio"] = self._format_ratio_value(float(cash_ratio_value), 2)
+                    if revenue_growth_value is not None and metrics.get("revenue_growth", "N/A") == "N/A":
+                        metrics["revenue_growth"] = self._format_percent_value(float(revenue_growth_value), 1)
+                    if profit_growth_value is not None and metrics.get("profit_growth", "N/A") == "N/A":
+                        metrics["profit_growth"] = self._format_percent_value(float(profit_growth_value), 1)
+
+                if metrics.get("ps") == "N/A":
+                    ps_value = self._calculate_ps_from_market_cap_yi(market_cap_yi, self._extract_number(revenue_value))
+                    if ps_value is not None:
+                        metrics["ps"] = f"{ps_value:.2f}倍"
+            except Exception as e:
+                logger.debug(f"🔍 [基本面降级] 基础信息补齐失败: {e}")
+
+            # 4. 如果仍然没有任何关键指标，则认为降级失败
+            key_fields = ("pe", "pb", "roe", "debt_ratio", "total_mv", "ps")
+            if not any(metrics.get(field) not in (None, "", "N/A") for field in key_fields):
+                return None
+
+            return metrics
+
+        except Exception as e:
+            logger.debug(f"🔍 [基本面降级] 部分财务指标获取失败: {e}")
+            return None
 
     def _get_real_financial_metrics(self, symbol: str, price_value: float) -> dict:
         """获取真实财务指标 - 优先使用数据库缓存，再使用API"""
@@ -1350,6 +1618,7 @@ class OptimizedChinaDataProvider:
             income_statement = financial_data.get('income_statement', [])
             cash_flow = financial_data.get('cash_flow', [])
             main_indicators = financial_data.get('main_indicators')
+            stock_code = (stock_info or {}).get('code', '')
 
             # main_indicators 可能是 DataFrame 或 list（to_dict('records') 的结果）
             if main_indicators is None:
@@ -1460,6 +1729,24 @@ class OptimizedChinaDataProvider:
                     metrics["roe"] = "N/A"
             else:
                 metrics["roe"] = "N/A"
+
+            revenue_growth_value = indicators_dict.get('营业总收入增长率') or indicators_dict.get('营业收入增长率')
+            if revenue_growth_value is not None and str(revenue_growth_value) != 'nan' and revenue_growth_value != '--':
+                try:
+                    metrics["revenue_growth"] = f"{float(revenue_growth_value):.1f}%"
+                except (ValueError, TypeError):
+                    metrics["revenue_growth"] = "N/A"
+            else:
+                metrics["revenue_growth"] = "N/A"
+
+            profit_growth_value = indicators_dict.get('净利润增长率') or indicators_dict.get('扣非净利润增长率')
+            if profit_growth_value is not None and str(profit_growth_value) != 'nan' and profit_growth_value != '--':
+                try:
+                    metrics["profit_growth"] = f"{float(profit_growth_value):.1f}%"
+                except (ValueError, TypeError):
+                    metrics["profit_growth"] = "N/A"
+            else:
+                metrics["profit_growth"] = "N/A"
 
             # 如果实时计算失败，尝试从 stock_info 获取总市值
             if "total_mv" not in metrics:
@@ -1626,24 +1913,30 @@ class OptimizedChinaDataProvider:
             # 尝试从 main_indicators DataFrame 计算 TTM 营业收入
             ttm_revenue = None
             try:
-                if '营业收入' in main_indicators['指标'].values:
-                    revenue_row = main_indicators[main_indicators['指标'] == '营业收入']
+                revenue_indicator_name = None
+                for candidate in ('营业总收入', '营业收入'):
+                    if candidate in main_indicators['指标'].values:
+                        revenue_indicator_name = candidate
+                        break
+
+                if revenue_indicator_name:
+                    revenue_row = main_indicators[main_indicators['指标'] == revenue_indicator_name]
                     if not revenue_row.empty:
-                        value_cols = [col for col in revenue_row.columns if col != '指标']
+                        value_cols = [col for col in revenue_row.columns if col != '指标' and col != '选项']
 
                         import pandas as pd
                         revenue_data = []
                         for col in value_cols:
                             rev_val = revenue_row[col].iloc[0]
                             if rev_val is not None and str(rev_val) != 'nan' and rev_val != '--':
-                                revenue_data.append({'报告期': col, '营业收入': rev_val})
+                                revenue_data.append({'报告期': col, revenue_indicator_name: rev_val})
 
                         if len(revenue_data) >= 2:
                             revenue_df = pd.DataFrame(revenue_data)
                             from scripts.sync_financial_data import _calculate_ttm_metric
-                            ttm_revenue = _calculate_ttm_metric(revenue_df, '营业收入')
+                            ttm_revenue = _calculate_ttm_metric(revenue_df, revenue_indicator_name)
                             if ttm_revenue:
-                                logger.info(f"✅ 计算 TTM 营业收入: {ttm_revenue:.2f} 万元")
+                                logger.info(f"✅ 计算 TTM {revenue_indicator_name}: {ttm_revenue:.2f}")
             except Exception as e:
                 logger.debug(f"计算 TTM 营业收入失败: {e}")
 
@@ -1653,33 +1946,36 @@ class OptimizedChinaDataProvider:
 
             if not revenue_for_ps:
                 # 降级到单期营业收入
-                revenue_value = indicators_dict.get('营业收入')
-                if revenue_value is not None and str(revenue_value) != 'nan' and revenue_value != '--':
-                    try:
-                        revenue_for_ps = float(revenue_value)
-                    except (ValueError, TypeError):
-                        pass
+                for candidate in ('营业总收入', '营业收入'):
+                    revenue_value = indicators_dict.get(candidate)
+                    if revenue_value is not None and str(revenue_value) != 'nan' and revenue_value != '--':
+                        try:
+                            revenue_for_ps = float(revenue_value)
+                            break
+                        except (ValueError, TypeError):
+                            continue
 
             if revenue_for_ps and revenue_for_ps > 0:
-                # 获取总股本计算市值
-                total_share = stock_info.get('total_share') if stock_info else None
-                if total_share and total_share > 0:
-                    # 市值（万元）= 股价（元）× 总股本（万股）
-                    market_cap = price_value * total_share
-                    ps_val = market_cap / revenue_for_ps
+                market_cap_yi = self._get_market_cap_yi_from_metrics(metrics, stock_info)
+                ps_val = self._calculate_ps_from_market_cap_yi(market_cap_yi, revenue_for_ps)
+                if ps_val is not None:
                     metrics["ps"] = f"{ps_val:.2f}倍"
-                    logger.info(f"✅ 计算PS({ps_type}): 市值{market_cap:.2f}万元 / 营业收入{revenue_for_ps:.2f}万元 = {metrics['ps']}")
+                    logger.info(f"✅ 计算PS({ps_type}): 市值{market_cap_yi:.2f}亿元 / 营收推断值 = {metrics['ps']}")
                 else:
-                    metrics["ps"] = "N/A（无总股本数据）"
-                    logger.warning(f"⚠️ 无法计算PS: 缺少总股本数据")
+                    metrics["ps"] = "N/A"
             else:
                 metrics["ps"] = "N/A"
 
-            # 补充其他指标的默认值
-            metrics.update({
-                "dividend_yield": "待查询",
-                "cash_ratio": "待分析"
-            })
+            cash_ratio_value = indicators_dict.get('现金比率')
+            if cash_ratio_value is not None and str(cash_ratio_value) != 'nan' and cash_ratio_value != '--':
+                try:
+                    metrics["cash_ratio"] = f"{float(cash_ratio_value):.2f}"
+                except (ValueError, TypeError):
+                    metrics["cash_ratio"] = "N/A"
+            else:
+                metrics["cash_ratio"] = "N/A"
+
+            metrics["dividend_yield"] = self._get_dividend_yield_from_sources(symbol=stock_code or symbol, stock_info=stock_info)
 
             # 评分（基于AKShare数据的简化评分）
             fundamental_score = self._calculate_fundamental_score(metrics, stock_info)
@@ -1772,6 +2068,23 @@ class OptimizedChinaDataProvider:
             net_income = ttm_net_income if ttm_net_income else (latest_income.get('n_income', 0) or 0)
             operate_profit = latest_income.get('operate_profit', 0) or 0
 
+            revenue_growth = None
+            profit_growth = None
+            try:
+                if len(income_statement) >= 2:
+                    prev_stmt = income_statement[1]
+                    prev_revenue = self._extract_number(prev_stmt.get('total_revenue'))
+                    prev_profit = self._extract_number(prev_stmt.get('n_income'))
+                    curr_revenue = self._extract_number(latest_income.get('total_revenue'))
+                    curr_profit = self._extract_number(latest_income.get('n_income'))
+
+                    if prev_revenue and prev_revenue != 0 and curr_revenue is not None:
+                        revenue_growth = (curr_revenue - prev_revenue) / abs(prev_revenue) * 100
+                    if prev_profit and prev_profit != 0 and curr_profit is not None:
+                        profit_growth = (curr_profit - prev_profit) / abs(prev_profit) * 100
+            except Exception as e:
+                logger.debug(f"🔍 Tushare 增速计算失败: {e}")
+
             revenue_type = "TTM" if ttm_revenue else "单期"
             profit_type = "TTM" if ttm_net_income else "单期"
 
@@ -1827,6 +2140,9 @@ class OptimizedChinaDataProvider:
             else:
                 metrics["roe"] = "N/A"
 
+            metrics["revenue_growth"] = self._format_percent_value(revenue_growth, 1)
+            metrics["profit_growth"] = self._format_percent_value(profit_growth, 1)
+
             # ROA
             if total_assets > 0 and net_income > 0:
                 roa = (net_income / total_assets) * 100
@@ -1848,13 +2164,19 @@ class OptimizedChinaDataProvider:
             else:
                 metrics["debt_ratio"] = "N/A"
 
+            cash_ratio_raw = latest_balance.get('cash_ratio')
+            if cash_ratio_raw is None:
+                money_cap_val = self._extract_number(latest_balance.get('money_cap'))
+                current_liab_val = self._extract_number(latest_balance.get('total_cur_liab'))
+                cash_ratio_raw = (money_cap_val / current_liab_val) if (money_cap_val and current_liab_val) else None
+
             # 其他指标设为默认值
             metrics.update({
-                "dividend_yield": "待查询",
+                "dividend_yield": self._get_dividend_yield_from_sources(symbol, stock_info),
                 "gross_margin": "待计算",
                 "current_ratio": "待计算",
                 "quick_ratio": "待计算",
-                "cash_ratio": "待分析"
+                "cash_ratio": self._format_ratio_value(self._extract_number(cash_ratio_raw), 2)
             })
 
             # 评分（基于真实数据的简化评分）
@@ -1953,6 +2275,38 @@ class OptimizedChinaDataProvider:
         elif '银行' in industry or '保险' in industry:
             score -= 0.5
 
+        revenue_growth = self._extract_number(metrics.get("revenue_growth"))
+        profit_growth = self._extract_number(metrics.get("profit_growth"))
+        roe = self._extract_number(metrics.get("roe"))
+        cash_ratio = self._extract_number(metrics.get("cash_ratio"))
+
+        if revenue_growth is not None:
+            if revenue_growth >= 20:
+                score += 1.2
+            elif revenue_growth >= 10:
+                score += 0.8
+            elif revenue_growth >= 0:
+                score += 0.3
+            else:
+                score -= 0.6
+
+        if profit_growth is not None:
+            if profit_growth >= 20:
+                score += 1.2
+            elif profit_growth >= 10:
+                score += 0.8
+            elif profit_growth < 0:
+                score -= 0.8
+
+        if roe is not None:
+            if roe >= 12:
+                score += 0.6
+            elif roe < 5:
+                score -= 0.4
+
+        if cash_ratio is not None and cash_ratio < 0.15:
+            score -= 0.3
+
         return min(max(score, 1.0), 10.0)
 
     def _calculate_risk_level(self, metrics: dict, stock_info: dict) -> str:
@@ -1993,14 +2347,66 @@ class OptimizedChinaDataProvider:
         else:
             return "当前估值偏高，投资需谨慎。建议等待更好的买入时机。"
 
-    def _analyze_growth_potential(self, symbol: str, industry_info: dict) -> str:
-        """分析成长潜力"""
-        if symbol.startswith(('000001', '600036')):
-            return "银行业整体增长稳定，受益于经济发展和金融深化。数字化转型和财富管理业务是主要增长点。"
-        elif symbol.startswith('300'):
-            return "创业板公司通常具有较高的成长潜力，但也伴随着较高的风险。需要关注技术创新和市场拓展能力。"
-        else:
-            return "成长潜力需要结合具体行业和公司基本面分析。建议关注行业发展趋势和公司竞争优势。"
+    def _analyze_growth_potential(self, symbol: str, industry_info: dict, financial_estimates: dict) -> str:
+        """分析成长潜力，尽量结合行业与真实财务指标输出更像研报的结论。"""
+        industry = str(industry_info.get("industry", "未知"))
+        market = str(industry_info.get("market", "未知"))
+        revenue_growth = self._extract_number(financial_estimates.get("revenue_growth"))
+        profit_growth = self._extract_number(financial_estimates.get("profit_growth"))
+        roe = self._extract_number(financial_estimates.get("roe"))
+        net_margin = self._extract_number(financial_estimates.get("net_margin"))
+        debt_ratio = self._extract_number(financial_estimates.get("debt_ratio"))
+        cash_ratio = self._extract_number(financial_estimates.get("cash_ratio"))
+        growth_score = self._extract_number(financial_estimates.get("growth_score"))
+
+        lines = []
+
+        if revenue_growth is not None:
+            if revenue_growth >= 10:
+                lines.append(f"收入端保持较快扩张，最新营业收入增速约 {revenue_growth:.1f}%，说明订单/交付仍具备一定支撑。")
+            elif revenue_growth >= 0:
+                lines.append(f"收入端维持温和增长，最新营业收入增速约 {revenue_growth:.1f}%，成长驱动力偏稳健。")
+            else:
+                lines.append(f"收入端出现放缓，最新营业收入增速约 {revenue_growth:.1f}%，需要继续跟踪新签订单与回款节奏。")
+
+        if profit_growth is not None:
+            if profit_growth >= 10:
+                lines.append(f"利润端增速约 {profit_growth:.1f}%，若能持续快于收入增速，意味着盈利质量在改善。")
+            elif profit_growth >= 0:
+                lines.append(f"利润端保持正增长，增速约 {profit_growth:.1f}%，当前更偏向稳健修复而非高弹性扩张。")
+            else:
+                lines.append(f"利润端增速约 {profit_growth:.1f}%，盈利释放弱于收入扩张，后续需关注毛利率与费用率变化。")
+
+        if roe is not None and net_margin is not None:
+            lines.append(f"从回报率看，ROE 约 {roe:.1f}%，净利率约 {net_margin:.1f}%，反映公司属于低净利率、重资产/工程属性较强的经营模式。")
+        elif roe is not None:
+            lines.append(f"从资本回报看，ROE 约 {roe:.1f}%，公司成长兑现更多取决于项目周转效率和资本开支约束。")
+
+        if "建筑" in industry or "基建" in industry or "工程" in industry:
+            lines.append("所处行业偏基建与工程承包，典型特征是收入体量大、利润率偏薄，成长更多依赖政策驱动、项目储备和订单转化，而非单纯估值扩张。")
+        elif "银行" in industry:
+            lines.append("银行业成长更偏稳健，核心看净息差、资产质量和中间业务扩张，弹性通常弱于成长行业。")
+        elif market == "创业板" or market == "科创板":
+            lines.append("板块属性决定了公司具备更强业绩弹性，但成长确定性与估值波动通常并存。")
+
+        if debt_ratio is not None and cash_ratio is not None:
+            if debt_ratio >= 70:
+                lines.append(f"同时，公司资产负债率约 {debt_ratio:.1f}%，现金比率约 {cash_ratio:.2f}，杠杆水平偏高，意味着成长兑现仍受资金占用和回款质量制约。")
+            elif cash_ratio < 0.2:
+                lines.append(f"现金比率约 {cash_ratio:.2f}，短期流动性安全边际一般，成长判断需结合经营现金流改善情况。")
+
+        if growth_score is not None:
+            if growth_score >= 7.5:
+                lines.append("综合来看，公司处于景气扩张阶段，成长性在所处行业中具备一定优势。")
+            elif growth_score >= 6:
+                lines.append("综合来看，公司成长性偏稳健，属于确定性高于弹性的类型，更适合结合估值和政策周期判断。")
+            else:
+                lines.append("综合来看，公司成长性暂未形成强催化，短期更适合以估值修复而非高增长假设来定价。")
+
+        if not lines:
+            return f"{industry}行业的成长性需要结合收入增速、利润释放、资本开支与行业景气度综合评估。"
+
+        return " ".join(lines)
 
     def _analyze_risks(self, symbol: str, financial_estimates: dict, industry_info: dict) -> str:
         """分析投资风险"""
@@ -2029,6 +2435,46 @@ class OptimizedChinaDataProvider:
 
         return risk_analysis
 
+    def _generate_industry_analysis(self, industry_info: dict, financial_estimates: dict) -> str:
+        """生成更偏研报口吻的行业分析。"""
+        industry = str(industry_info.get("industry", "未知"))
+        market = str(industry_info.get("market", "未知"))
+        base_analysis = str(industry_info.get("analysis", "")).strip()
+
+        net_margin = self._extract_number(financial_estimates.get("net_margin"))
+        debt_ratio = self._extract_number(financial_estimates.get("debt_ratio"))
+        roe = self._extract_number(financial_estimates.get("roe"))
+        ps = self._extract_number(financial_estimates.get("ps"))
+        dividend_yield = self._extract_number(financial_estimates.get("dividend_yield"))
+
+        lines = []
+
+        if "建筑" in industry or "基建" in industry or "工程" in industry:
+            lines.append(f"{industry}行业通常受基建投资、稳增长政策、能源转型和重大项目开工节奏驱动，板块特征是收入规模大、利润率偏薄、回款周期较长。")
+            if net_margin is not None and debt_ratio is not None:
+                lines.append(f"从当前指标看，公司净利率约 {net_margin:.1f}%，资产负债率约 {debt_ratio:.1f}%，符合工程承包类企业“高周转、低净利、重资金占用”的典型画像。")
+            if roe is not None:
+                lines.append(f"ROE 约 {roe:.1f}%，说明公司盈利能力更多依赖项目规模与执行效率，而不是高毛利商业模式。")
+            if ps is not None:
+                lines.append(f"市销率约 {ps:.2f} 倍，在建筑工程板块中通常反映市场对其订单稳定性与现金流兑现能力的定价，而非单纯利润弹性。")
+        elif "银行" in industry:
+            lines.append("银行板块的核心驱动来自息差、资产质量与中间业务扩张，行业整体波动较小，更偏防御属性。")
+        elif "科技" in industry or "软件" in industry or "互联网" in industry:
+            lines.append(f"{industry}行业更重视技术迭代、产品周期和市场份额提升，估值与盈利弹性往往同时放大。")
+        else:
+            if base_analysis:
+                lines.append(base_analysis)
+            else:
+                lines.append(f"{industry}行业的景气度通常由需求周期、政策导向和竞争格局共同决定，需要结合公司市场份额与盈利质量判断。")
+
+        if market and market != "未知":
+            lines.append(f"公司当前位于{market}板块，资金偏好通常更看重估值安全边际、分红能力和业绩兑现节奏。")
+
+        if dividend_yield is not None and dividend_yield > 0:
+            lines.append(f"股息收益率约 {dividend_yield:.2f}%，在当前环境下有助于提升板块的防御属性和中长期配置吸引力。")
+
+        return " ".join(lines)
+
     def _generate_investment_advice(self, financial_estimates: dict, industry_info: dict) -> str:
         """生成投资建议"""
         fundamental_score = financial_estimates['fundamental_score']
@@ -2036,22 +2482,51 @@ class OptimizedChinaDataProvider:
         growth_score = financial_estimates['growth_score']
 
         total_score = (fundamental_score + valuation_score + growth_score) / 3
+        pe = self._extract_number(financial_estimates.get("pe"))
+        pb = self._extract_number(financial_estimates.get("pb"))
+        roe = self._extract_number(financial_estimates.get("roe"))
+        debt_ratio = self._extract_number(financial_estimates.get("debt_ratio"))
+        dividend_yield = self._extract_number(financial_estimates.get("dividend_yield"))
+        industry = str(industry_info.get("industry", "未知"))
+
+        thesis = []
+        risk_notes = []
+
+        if pe is not None and pb is not None:
+            thesis.append(f"当前估值处于 PE {pe:.1f} 倍、PB {pb:.2f} 倍区间，整体更接近价值型定价框架。")
+        if roe is not None:
+            thesis.append(f"ROE 约 {roe:.1f}%，意味着公司盈利能力并不激进，更适合用稳健回报而非高增长预期来定价。")
+        if dividend_yield is not None and dividend_yield > 0:
+            thesis.append(f"股息收益率约 {dividend_yield:.2f}%，对中长期持有者具备一定配置吸引力。")
+
+        if debt_ratio is not None and debt_ratio >= 70:
+            risk_notes.append(f"资产负债率约 {debt_ratio:.1f}%，杠杆偏高，后续需重点跟踪现金流、回款和项目执行质量。")
+        if "建筑" in industry or "工程" in industry or "基建" in industry:
+            risk_notes.append("建筑工程类公司弹性更多来自政策催化、订单落地和估值修复，短期股价表现未必同步于收入规模。")
 
         if total_score >= 7.5:
-            return """**投资建议**: 🟢 **买入**
-- 基本面良好，估值合理，具有较好的投资价值
-- 建议分批建仓，长期持有
-- 适合价值投资者和稳健型投资者"""
+            title = "🟢 **买入**"
+            action = "建议以中期配置视角分批布局，在估值具备安全边际时逐步建仓。"
         elif total_score >= 6.0:
-            return """**投资建议**: 🟡 **观望**
-- 基本面一般，需要进一步观察
-- 可以小仓位试探，等待更好时机
-- 适合有经验的投资者"""
+            title = "🟡 **观望**"
+            action = "建议维持跟踪，等待订单催化、利润率改善或更优价格区间后再提升仓位。"
         else:
-            return """**投资建议**: 🔴 **回避**
-- 当前风险较高，不建议投资
-- 建议等待基本面改善或估值回落
-- 风险承受能力较低的投资者应避免"""
+            title = "🔴 **回避**"
+            action = "建议暂以观察为主，等待基本面改善或风险释放更充分后再评估介入时点。"
+
+        if not thesis:
+            thesis.append("当前建议仍需结合估值、景气度与财务质量综合判断。")
+
+        if not risk_notes:
+            risk_notes.append("需持续关注行业景气度、政策变化和公司业绩兑现情况。")
+
+        thesis_text = "\n".join(f"- {item}" for item in thesis[:3])
+        risk_text = "\n".join(f"- {item}" for item in risk_notes[:3])
+
+        return f"""**投资建议**: {title}
+{thesis_text}
+- {action}
+{risk_text}"""
 
     def _try_get_old_cache(self, symbol: str, start_date: str, end_date: str) -> Optional[str]:
         """尝试获取过期的缓存数据作为备用"""

@@ -1081,9 +1081,12 @@ function formatNewsTime(dateStr: string | null | undefined): string {
 function formatReportName(key: string): string {
   // 完整的13个报告映射
   const nameMap: Record<string, string> = {
-    // 分析师团队 (4个)
+    // 分析师团队
     'market_report': '📈 市场技术分析',
-    'sentiment_report': '💭 市场情绪分析',
+    'a_share_sentiment_report': '🔥 A股盘面情绪',
+    'theme_rotation_report': '🧭 A股题材轮动',
+    'institutional_theme_report': '🏦 机构布局题材',
+    'sentiment_report': '💬 公共舆情分析',
     'news_report': '📰 新闻事件分析',
     'fundamentals_report': '💰 基本面分析',
 

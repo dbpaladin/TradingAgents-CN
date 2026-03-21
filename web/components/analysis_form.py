@@ -167,7 +167,49 @@ def render_analysis_form():
                     help="分析社交媒体情绪、投资者情绪指标"
                 )
 
+            if market_type == "A股":
+                emotion_analyst = st.checkbox(
+                    "🔥 A股情绪分析师",
+                    value='emotion' in cached_analysts or 'sentiment' in cached_analysts,
+                    help="分析涨停梯队、炸板率、连板高度和情绪周期"
+                )
+            else:
+                emotion_analyst = st.checkbox(
+                    "🔥 A股情绪分析师",
+                    value=False,
+                    disabled=True,
+                    help="仅支持A股市场"
+                )
+
         with col2:
+            if market_type == "A股":
+                theme_rotation_analyst = st.checkbox(
+                    "🧭 题材轮动分析师",
+                    value='theme_rotation' in cached_analysts or 'sentiment' in cached_analysts,
+                    help="分析主线题材、板块轮动、龙头梯队和个股题材定位"
+                )
+            else:
+                theme_rotation_analyst = st.checkbox(
+                    "🧭 题材轮动分析师",
+                    value=False,
+                    disabled=True,
+                    help="仅支持A股市场"
+                )
+
+            if market_type == "A股":
+                institutional_theme_analyst = st.checkbox(
+                    "🏦 机构布局题材分析师",
+                    value='institutional_theme' in cached_analysts,
+                    help="识别机构酝酿/试盘的候选题材和提前布局机会"
+                )
+            else:
+                institutional_theme_analyst = st.checkbox(
+                    "🏦 机构布局题材分析师",
+                    value=False,
+                    disabled=True,
+                    help="仅支持A股市场"
+                )
+
             news_analyst = st.checkbox(
                 "📰 新闻分析师",
                 value='news' in cached_analysts,
@@ -184,6 +226,12 @@ def render_analysis_form():
         selected_analysts = []
         if market_analyst:
             selected_analysts.append(("market", "市场分析师"))
+        if emotion_analyst:
+            selected_analysts.append(("emotion", "A股情绪分析师"))
+        if theme_rotation_analyst:
+            selected_analysts.append(("theme_rotation", "题材轮动分析师"))
+        if institutional_theme_analyst:
+            selected_analysts.append(("institutional_theme", "机构布局题材分析师"))
         if social_analyst:
             selected_analysts.append(("social", "社交媒体分析师"))
         if news_analyst:

@@ -245,6 +245,9 @@ class AsyncProgressTracker:
         """获取分析师显示名称（保留兼容性）"""
         name_map = {
             'market': '市场分析师',
+            'emotion': 'A股情绪分析师',
+            'theme_rotation': '题材轮动分析师',
+            'institutional_theme': '机构布局题材分析师',
             'fundamentals': '基本面分析师',
             'technical': '技术分析师',
             'sentiment': '情绪分析师',
@@ -270,6 +273,18 @@ class AsyncProgressTracker:
             'sentiment': {
                 "name": "💭 情绪分析",
                 "description": "分析市场情绪、投资者心理、舆论倾向等"
+            },
+            'emotion': {
+                "name": "🔥 A股情绪分析",
+                "description": "分析涨停梯队、炸板率、连板高度和情绪周期"
+            },
+            'theme_rotation': {
+                "name": "🧭 题材轮动分析",
+                "description": "分析主线题材、板块轮动、龙头梯队和目标股题材定位"
+            },
+            'institutional_theme': {
+                "name": "🏦 机构布局题材",
+                "description": "识别机构酝酿/试盘的候选题材与提前布局机会"
             },
             'news': {
                 "name": "📰 新闻分析",

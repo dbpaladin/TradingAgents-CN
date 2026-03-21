@@ -3,6 +3,7 @@ import json
 
 # 导入统一日志系统
 from tradingagents.utils.logging_init import get_logger
+from tradingagents.agents.utils.prompt_context import compact_history, compact_text, format_memories
 logger = get_logger("default")
 
 
@@ -10,13 +11,25 @@ def create_research_manager(llm, memory):
     def research_manager_node(state) -> dict:
         history = state["investment_debate_state"].get("history", "")
         market_research_report = state["market_report"]
+        a_share_sentiment_report = state.get("a_share_sentiment_report", "")
+        theme_rotation_report = state.get("theme_rotation_report", "")
+        institutional_theme_report = state.get("institutional_theme_report", "")
         sentiment_report = state["sentiment_report"]
         news_report = state["news_report"]
         fundamentals_report = state["fundamentals_report"]
 
         investment_debate_state = state["investment_debate_state"]
 
-        curr_situation = f"{market_research_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
+        market_research_report = compact_text(market_research_report, 1800, "research_manager.market_report")
+        a_share_sentiment_report = compact_text(a_share_sentiment_report, 1200, "research_manager.a_share_sentiment")
+        theme_rotation_report = compact_text(theme_rotation_report, 1200, "research_manager.theme_rotation")
+        institutional_theme_report = compact_text(institutional_theme_report, 1200, "research_manager.institutional_theme")
+        sentiment_report = compact_text(sentiment_report, 800, "research_manager.sentiment")
+        news_report = compact_text(news_report, 1000, "research_manager.news")
+        fundamentals_report = compact_text(fundamentals_report, 1400, "research_manager.fundamentals")
+        history = compact_history(history, 1400, "research_manager.history")
+
+        curr_situation = f"{market_research_report}\n\n{a_share_sentiment_report}\n\n{theme_rotation_report}\n\n{institutional_theme_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
 
         # 安全检查：确保memory不为None
         if memory is not None:
@@ -25,9 +38,7 @@ def create_research_manager(llm, memory):
             logger.warning(f"⚠️ [DEBUG] memory为None，跳过历史记忆检索")
             past_memories = []
 
-        past_memory_str = ""
-        for i, rec in enumerate(past_memories, 1):
-            past_memory_str += rec["recommendation"] + "\n\n"
+        past_memory_str = format_memories(past_memories, max_chars=800, label="research_manager.memories")
 
         prompt = f"""作为投资组合经理和辩论主持人，您的职责是批判性地评估这轮辩论并做出明确决策：支持看跌分析师、看涨分析师，或者仅在基于所提出论点有强有力理由时选择持有。
 
@@ -54,6 +65,12 @@ def create_research_manager(llm, memory):
 
 以下是综合分析报告：
 市场研究：{market_research_report}
+
+A股盘面情绪：{a_share_sentiment_report}
+
+A股题材轮动：{theme_rotation_report}
+
+机构布局题材：{institutional_theme_report}
 
 情绪分析：{sentiment_report}
 

@@ -4,6 +4,7 @@ import json
 
 # 导入统一日志系统
 from tradingagents.utils.logging_init import get_logger
+from tradingagents.agents.utils.prompt_context import compact_history, compact_text, format_memories
 logger = get_logger("default")
 
 
@@ -17,6 +18,9 @@ def create_bull_researcher(llm, memory):
 
         current_response = investment_debate_state.get("current_response", "")
         market_research_report = state["market_report"]
+        a_share_sentiment_report = state.get("a_share_sentiment_report", "")
+        theme_rotation_report = state.get("theme_rotation_report", "")
+        institutional_theme_report = state.get("institutional_theme_report", "")
         sentiment_report = state["sentiment_report"]
         news_report = state["news_report"]
         fundamentals_report = state["fundamentals_report"]
@@ -77,6 +81,9 @@ def create_bull_researcher(llm, memory):
 
         logger.debug(f"🐂 [DEBUG] 接收到的报告:")
         logger.debug(f"🐂 [DEBUG] - 市场报告长度: {len(market_research_report)}")
+        logger.debug(f"🐂 [DEBUG] - A股情绪报告长度: {len(a_share_sentiment_report)}")
+        logger.debug(f"🐂 [DEBUG] - 题材轮动报告长度: {len(theme_rotation_report)}")
+        logger.debug(f"🐂 [DEBUG] - 机构题材报告长度: {len(institutional_theme_report)}")
         logger.debug(f"🐂 [DEBUG] - 情绪报告长度: {len(sentiment_report)}")
         logger.debug(f"🐂 [DEBUG] - 新闻报告长度: {len(news_report)}")
         logger.debug(f"🐂 [DEBUG] - 基本面报告长度: {len(fundamentals_report)}")
@@ -84,7 +91,17 @@ def create_bull_researcher(llm, memory):
         logger.debug(f"🐂 [DEBUG] - 股票代码: {ticker}, 公司名称: {company_name}, 类型: {market_info['market_name']}, 货币: {currency}")
         logger.debug(f"🐂 [DEBUG] - 市场详情: 中国A股={is_china}, 港股={is_hk}, 美股={is_us}")
 
-        curr_situation = f"{market_research_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
+        market_research_report = compact_text(market_research_report, 1800, "bull.market_report")
+        a_share_sentiment_report = compact_text(a_share_sentiment_report, 1200, "bull.a_share_sentiment")
+        theme_rotation_report = compact_text(theme_rotation_report, 1200, "bull.theme_rotation")
+        institutional_theme_report = compact_text(institutional_theme_report, 1200, "bull.institutional_theme")
+        sentiment_report = compact_text(sentiment_report, 800, "bull.sentiment")
+        news_report = compact_text(news_report, 1000, "bull.news")
+        fundamentals_report = compact_text(fundamentals_report, 1400, "bull.fundamentals")
+        history = compact_history(history, 1200, "bull.history")
+        current_response = compact_text(current_response, 800, "bull.current_response")
+
+        curr_situation = f"{market_research_report}\n\n{a_share_sentiment_report}\n\n{theme_rotation_report}\n\n{institutional_theme_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
 
         # 安全检查：确保memory不为None
         if memory is not None:
@@ -93,9 +110,7 @@ def create_bull_researcher(llm, memory):
             logger.warning(f"⚠️ [DEBUG] memory为None，跳过历史记忆检索")
             past_memories = []
 
-        past_memory_str = ""
-        for i, rec in enumerate(past_memories, 1):
-            past_memory_str += rec["recommendation"] + "\n\n"
+        past_memory_str = format_memories(past_memories, max_chars=800, label="bull.memories")
 
         prompt = f"""你是一位看涨分析师，负责为股票 {company_name}（股票代码：{ticker}）的投资建立强有力的论证。
 
@@ -113,6 +128,9 @@ def create_bull_researcher(llm, memory):
 
 可用资源：
 市场研究报告：{market_research_report}
+A股盘面情绪报告：{a_share_sentiment_report}
+A股题材轮动报告：{theme_rotation_report}
+机构布局题材报告：{institutional_theme_report}
 社交媒体情绪报告：{sentiment_report}
 最新世界事务新闻：{news_report}
 公司基本面报告：{fundamentals_report}

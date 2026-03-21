@@ -3,6 +3,7 @@ import json
 
 # 导入统一日志系统
 from tradingagents.utils.logging_init import get_logger
+from tradingagents.agents.utils.prompt_context import compact_history, compact_text, format_memories
 logger = get_logger("default")
 
 
@@ -15,11 +16,24 @@ def create_risk_manager(llm, memory):
         risk_debate_state = state["risk_debate_state"]
         market_research_report = state["market_report"]
         news_report = state["news_report"]
-        fundamentals_report = state["news_report"]
+        fundamentals_report = state["fundamentals_report"]
+        a_share_sentiment_report = state.get("a_share_sentiment_report", "")
+        theme_rotation_report = state.get("theme_rotation_report", "")
+        institutional_theme_report = state.get("institutional_theme_report", "")
         sentiment_report = state["sentiment_report"]
         trader_plan = state["investment_plan"]
 
-        curr_situation = f"{market_research_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
+        market_research_report = compact_text(market_research_report, 1600, "risk_manager.market_report")
+        a_share_sentiment_report = compact_text(a_share_sentiment_report, 1000, "risk_manager.a_share_sentiment")
+        theme_rotation_report = compact_text(theme_rotation_report, 1000, "risk_manager.theme_rotation")
+        institutional_theme_report = compact_text(institutional_theme_report, 1000, "risk_manager.institutional_theme")
+        sentiment_report = compact_text(sentiment_report, 700, "risk_manager.sentiment")
+        news_report = compact_text(news_report, 900, "risk_manager.news")
+        fundamentals_report = compact_text(fundamentals_report, 1200, "risk_manager.fundamentals")
+        trader_plan = compact_text(trader_plan, 1200, "risk_manager.trader_plan")
+        history = compact_history(history, 1400, "risk_manager.history")
+
+        curr_situation = f"{market_research_report}\n\n{a_share_sentiment_report}\n\n{theme_rotation_report}\n\n{institutional_theme_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
 
         # 安全检查：确保memory不为None
         if memory is not None:
@@ -28,9 +42,7 @@ def create_risk_manager(llm, memory):
             logger.warning(f"⚠️ [DEBUG] memory为None，跳过历史记忆检索")
             past_memories = []
 
-        past_memory_str = ""
-        for i, rec in enumerate(past_memories, 1):
-            past_memory_str += rec["recommendation"] + "\n\n"
+        past_memory_str = format_memories(past_memories, max_chars=700, label="risk_manager.memories")
 
         prompt = f"""作为风险管理委员会主席和辩论主持人，您的目标是评估三位风险分析师——激进、中性和安全/保守——之间的辩论，并确定交易员的最佳行动方案。您的决策必须产生明确的建议：买入、卖出或持有。只有在有具体论据强烈支持时才选择持有，而不是在所有方面都似乎有效时作为后备选择。力求清晰和果断。
 
@@ -39,6 +51,7 @@ def create_risk_manager(llm, memory):
 2. **提供理由**：用辩论中的直接引用和反驳论点支持您的建议。
 3. **完善交易员计划**：从交易员的原始计划**{trader_plan}**开始，根据分析师的见解进行调整。
 4. **从过去的错误中学习**：使用**{past_memory_str}**中的经验教训来解决先前的误判，改进您现在做出的决策，确保您不会做出错误的买入/卖出/持有决定而亏损。
+5. **对于A股题材股**：必须结合题材轮动报告判断交易逻辑是否建立在主线强化、发酵扩散，还是高位分歧/退潮切换之上。
 
 交付成果：
 - 明确且可操作的建议：买入、卖出或持有。
@@ -48,6 +61,15 @@ def create_risk_manager(llm, memory):
 
 **分析师辩论历史：**
 {history}
+
+**关键背景报告：**
+市场研究：{market_research_report}
+A股盘面情绪：{a_share_sentiment_report}
+A股题材轮动：{theme_rotation_report}
+机构布局题材：{institutional_theme_report}
+公共舆情：{sentiment_report}
+新闻事件：{news_report}
+基本面：{fundamentals_report}
 
 ---
 

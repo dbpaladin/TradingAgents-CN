@@ -4,6 +4,7 @@ import json
 
 # 导入统一日志系统
 from tradingagents.utils.logging_init import get_logger
+from tradingagents.agents.utils.prompt_context import compact_text, format_memories
 logger = get_logger("default")
 
 
@@ -12,6 +13,9 @@ def create_trader(llm, memory):
         company_name = state["company_of_interest"]
         investment_plan = state["investment_plan"]
         market_research_report = state["market_report"]
+        a_share_sentiment_report = state.get("a_share_sentiment_report", "")
+        theme_rotation_report = state.get("theme_rotation_report", "")
+        institutional_theme_report = state.get("institutional_theme_report", "")
         sentiment_report = state["sentiment_report"]
         news_report = state["news_report"]
         fundamentals_report = state["fundamentals_report"]
@@ -34,15 +38,22 @@ def create_trader(llm, memory):
         logger.debug(f"💰 [DEBUG] 基本面报告长度: {len(fundamentals_report)}")
         logger.debug(f"💰 [DEBUG] 基本面报告前200字符: {fundamentals_report[:200]}...")
 
-        curr_situation = f"{market_research_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
+        investment_plan = compact_text(investment_plan, 1400, "trader.investment_plan")
+        market_research_report = compact_text(market_research_report, 1600, "trader.market_report")
+        a_share_sentiment_report = compact_text(a_share_sentiment_report, 1000, "trader.a_share_sentiment")
+        theme_rotation_report = compact_text(theme_rotation_report, 1000, "trader.theme_rotation")
+        institutional_theme_report = compact_text(institutional_theme_report, 1000, "trader.institutional_theme")
+        sentiment_report = compact_text(sentiment_report, 700, "trader.sentiment")
+        news_report = compact_text(news_report, 900, "trader.news")
+        fundamentals_report = compact_text(fundamentals_report, 1200, "trader.fundamentals")
+
+        curr_situation = f"{market_research_report}\n\n{a_share_sentiment_report}\n\n{theme_rotation_report}\n\n{institutional_theme_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
 
         # 检查memory是否可用
         if memory is not None:
             logger.warning(f"⚠️ [DEBUG] memory可用，获取历史记忆")
             past_memories = memory.get_memories(curr_situation, n_matches=2)
-            past_memory_str = ""
-            for i, rec in enumerate(past_memories, 1):
-                past_memory_str += rec["recommendation"] + "\n\n"
+            past_memory_str = format_memories(past_memories, max_chars=700, label="trader.memories")
         else:
             logger.warning(f"⚠️ [DEBUG] memory为None，跳过历史记忆检索")
             past_memories = []
@@ -79,6 +90,8 @@ def create_trader(llm, memory):
 🎯 目标价位计算指导：
 - 基于基本面分析中的估值数据（P/E、P/B、DCF等）
 - 参考技术分析的支撑位和阻力位
+- 对A股标的，必须结合题材轮动报告判断该股是主线核心、跟风补涨还是独立逻辑
+- 对A股标的，还必须结合机构布局题材报告判断该股是否适合“提前布局”而不是只做热点跟随
 - 考虑行业平均估值水平
 - 结合市场情绪和新闻影响
 - 即使市场情绪过热，也要基于合理估值给出目标价

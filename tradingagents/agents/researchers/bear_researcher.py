@@ -4,6 +4,7 @@ import json
 
 # 导入统一日志系统
 from tradingagents.utils.logging_init import get_logger
+from tradingagents.agents.utils.prompt_context import compact_history, compact_text, format_memories
 logger = get_logger("default")
 
 
@@ -15,6 +16,9 @@ def create_bear_researcher(llm, memory):
 
         current_response = investment_debate_state.get("current_response", "")
         market_research_report = state["market_report"]
+        a_share_sentiment_report = state.get("a_share_sentiment_report", "")
+        theme_rotation_report = state.get("theme_rotation_report", "")
+        institutional_theme_report = state.get("institutional_theme_report", "")
         sentiment_report = state["sentiment_report"]
         news_report = state["news_report"]
         fundamentals_report = state["fundamentals_report"]
@@ -73,7 +77,17 @@ def create_bear_researcher(llm, memory):
         currency = market_info['currency_name']
         currency_symbol = market_info['currency_symbol']
 
-        curr_situation = f"{market_research_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
+        market_research_report = compact_text(market_research_report, 1800, "bear.market_report")
+        a_share_sentiment_report = compact_text(a_share_sentiment_report, 1200, "bear.a_share_sentiment")
+        theme_rotation_report = compact_text(theme_rotation_report, 1200, "bear.theme_rotation")
+        institutional_theme_report = compact_text(institutional_theme_report, 1200, "bear.institutional_theme")
+        sentiment_report = compact_text(sentiment_report, 800, "bear.sentiment")
+        news_report = compact_text(news_report, 1000, "bear.news")
+        fundamentals_report = compact_text(fundamentals_report, 1400, "bear.fundamentals")
+        history = compact_history(history, 1200, "bear.history")
+        current_response = compact_text(current_response, 800, "bear.current_response")
+
+        curr_situation = f"{market_research_report}\n\n{a_share_sentiment_report}\n\n{theme_rotation_report}\n\n{institutional_theme_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
 
         # 安全检查：确保memory不为None
         if memory is not None:
@@ -82,9 +96,7 @@ def create_bear_researcher(llm, memory):
             logger.warning(f"⚠️ [DEBUG] memory为None，跳过历史记忆检索")
             past_memories = []
 
-        past_memory_str = ""
-        for i, rec in enumerate(past_memories, 1):
-            past_memory_str += rec["recommendation"] + "\n\n"
+        past_memory_str = format_memories(past_memories, max_chars=800, label="bear.memories")
 
         prompt = f"""你是一位看跌分析师，负责论证不投资股票 {company_name}（股票代码：{ticker}）的理由。
 
@@ -104,6 +116,9 @@ def create_bear_researcher(llm, memory):
 可用资源：
 
 市场研究报告：{market_research_report}
+A股盘面情绪报告：{a_share_sentiment_report}
+A股题材轮动报告：{theme_rotation_report}
+机构布局题材报告：{institutional_theme_report}
 社交媒体情绪报告：{sentiment_report}
 最新世界事务新闻：{news_report}
 公司基本面报告：{fundamentals_report}

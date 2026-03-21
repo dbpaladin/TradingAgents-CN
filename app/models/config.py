@@ -188,6 +188,7 @@ class LLMConfig(BaseModel):
     provider: str = Field(default="openai", description="供应商标识（支持动态添加）")
     model_name: str = Field(..., description="模型名称/代码")
     model_display_name: Optional[str] = Field(None, description="模型显示名称")
+    is_default: bool = Field(default=False, description="是否为系统默认模型")
     api_key: Optional[str] = Field(None, description="API密钥(可选，优先从厂家配置获取)")
     api_base: Optional[str] = Field(None, description="API基础URL")
     max_tokens: int = Field(default=4000, description="最大token数")
@@ -358,6 +359,7 @@ class LLMConfigRequest(BaseModel):
     provider: str = Field(..., description="供应商标识（支持动态添加）")
     model_name: str
     model_display_name: Optional[str] = None  # 新增：模型显示名称
+    is_default: bool = False
     api_key: Optional[str] = None  # 可选，优先从厂家配置获取
     api_base: Optional[str] = None
     max_tokens: int = 4000

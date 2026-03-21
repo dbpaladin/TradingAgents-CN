@@ -3,6 +3,7 @@ import json
 
 # 导入统一日志系统
 from tradingagents.utils.logging_init import get_logger
+from tradingagents.agents.utils.prompt_context import compact_history, compact_text
 logger = get_logger("default")
 
 
@@ -16,21 +17,39 @@ def create_risky_debator(llm):
         current_neutral_response = risk_debate_state.get("current_neutral_response", "")
 
         market_research_report = state["market_report"]
+        a_share_sentiment_report = state.get("a_share_sentiment_report", "")
+        theme_rotation_report = state.get("theme_rotation_report", "")
+        institutional_theme_report = state.get("institutional_theme_report", "")
         sentiment_report = state["sentiment_report"]
         news_report = state["news_report"]
         fundamentals_report = state["fundamentals_report"]
 
         trader_decision = state["trader_investment_plan"]
 
+        market_research_report = compact_text(market_research_report, 1400, "risky.market_report")
+        a_share_sentiment_report = compact_text(a_share_sentiment_report, 900, "risky.a_share_sentiment")
+        theme_rotation_report = compact_text(theme_rotation_report, 900, "risky.theme_rotation")
+        institutional_theme_report = compact_text(institutional_theme_report, 900, "risky.institutional_theme")
+        sentiment_report = compact_text(sentiment_report, 600, "risky.sentiment")
+        news_report = compact_text(news_report, 800, "risky.news")
+        fundamentals_report = compact_text(fundamentals_report, 1000, "risky.fundamentals")
+        trader_decision = compact_text(trader_decision, 1000, "risky.trader_decision")
+        history = compact_history(history, 1000, "risky.history")
+        current_safe_response = compact_text(current_safe_response, 700, "risky.current_safe")
+        current_neutral_response = compact_text(current_neutral_response, 700, "risky.current_neutral")
+
         # 📊 记录输入数据长度
         logger.info(f"📊 [Risky Analyst] 输入数据长度统计:")
         logger.info(f"  - market_report: {len(market_research_report):,} 字符")
+        logger.info(f"  - a_share_sentiment_report: {len(a_share_sentiment_report):,} 字符")
+        logger.info(f"  - theme_rotation_report: {len(theme_rotation_report):,} 字符")
+        logger.info(f"  - institutional_theme_report: {len(institutional_theme_report):,} 字符")
         logger.info(f"  - sentiment_report: {len(sentiment_report):,} 字符")
         logger.info(f"  - news_report: {len(news_report):,} 字符")
         logger.info(f"  - fundamentals_report: {len(fundamentals_report):,} 字符")
         logger.info(f"  - trader_decision: {len(trader_decision):,} 字符")
         logger.info(f"  - history: {len(history):,} 字符")
-        total_length = (len(market_research_report) + len(sentiment_report) +
+        total_length = (len(market_research_report) + len(a_share_sentiment_report) + len(theme_rotation_report) + len(institutional_theme_report) + len(sentiment_report) +
                        len(news_report) + len(fundamentals_report) +
                        len(trader_decision) + len(history) +
                        len(current_safe_response) + len(current_neutral_response))
@@ -43,6 +62,9 @@ def create_risky_debator(llm):
 您的任务是通过质疑和批评保守和中性立场来为交易员的决策创建一个令人信服的案例，证明为什么您的高回报视角提供了最佳的前进道路。将以下来源的见解纳入您的论点：
 
 市场研究报告：{market_research_report}
+A股盘面情绪报告：{a_share_sentiment_report}
+A股题材轮动报告：{theme_rotation_report}
+机构布局题材报告：{institutional_theme_report}
 社交媒体情绪报告：{sentiment_report}
 最新世界事务报告：{news_report}
 公司基本面报告：{fundamentals_report}

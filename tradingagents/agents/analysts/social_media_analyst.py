@@ -108,10 +108,9 @@ def create_social_media_analyst(llm, toolkit):
         company_name = _get_company_name_for_social_media(ticker, market_info)
         logger.info(f"[社交媒体分析师] 公司名称: {company_name}")
 
-        # 统一使用 get_stock_sentiment_unified 工具
-        # 该工具内部会自动识别股票类型并调用相应的情绪数据源
-        logger.info(f"[社交媒体分析师] 使用统一情绪分析工具，自动识别股票类型")
-        tools = [toolkit.get_stock_sentiment_unified]
+        # 使用公共舆情工具，聚焦新闻/社区/社交平台情绪
+        logger.info(f"[社交媒体分析师] 使用公共舆情分析工具")
+        tools = [toolkit.get_stock_public_sentiment_unified]
 
         system_message = (
             """您是一位专业的中国市场社交媒体和投资情绪分析师，负责分析中国投资者对特定股票的讨论和情绪变化。
@@ -123,7 +122,6 @@ def create_social_media_analyst(llm, toolkit):
 4. 评估散户与机构投资者的观点差异
 5. 分析政策变化对投资者情绪的影响
 6. 评估情绪变化对股价的潜在影响
-
 重点关注平台：
 - 财经新闻：财联社、新浪财经、东方财富、腾讯财经
 - 投资社区：雪球、东方财富股吧、同花顺
@@ -136,6 +134,7 @@ def create_social_media_analyst(llm, toolkit):
 - 热点事件对股价预期的影响
 - 政策解读和市场预期变化
 - 散户情绪与机构观点的差异
+- 识别公共舆情与真实交易盘面的背离
 
 📊 情绪影响分析要求：
 - 量化投资者情绪强度（乐观/悲观程度）和情绪变化趋势

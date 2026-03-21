@@ -560,8 +560,13 @@ class ConfigService:
             if saved_config:
                 print(f"✅ 配置保存成功，验证LLM配置数量: {len(saved_config.get('llm_configs', []))}")
 
-                # 暂时跳过统一配置同步，避免冲突
-                # unified_config.sync_to_legacy_format(config)
+                try:
+                    unified_config.sync_to_legacy_format(config)
+                    from app.services.config_provider import provider as config_provider
+                    config_provider.invalidate()
+                    print("✅ 已同步到本地配置文件并清理配置缓存")
+                except Exception as sync_error:
+                    print(f"⚠️ 同步到本地配置文件失败: {sync_error}")
 
                 return True
             else:
@@ -634,6 +639,10 @@ class ConfigService:
                 return False
 
             config.default_llm = model_name
+            config.system_settings["default_llm"] = model_name
+            config.system_settings["default_model"] = model_name
+            for llm in config.llm_configs:
+                llm.is_default = llm.model_name == model_name
             return await self.save_system_config(config)
 
         except Exception as e:
@@ -853,6 +862,9 @@ class ConfigService:
     async def update_llm_config(self, llm_config: LLMConfig) -> bool:
         """更新大模型配置"""
         try:
+            if llm_config.is_default:
+                unified_config.set_default_model(llm_config.model_name)
+
             # 直接保存到统一配置管理器
             success = unified_config.save_llm_config(llm_config)
             if not success:
@@ -871,6 +883,15 @@ class ConfigService:
             else:
                 # 如果不存在，添加新配置
                 config.llm_configs.append(llm_config)
+
+            if llm_config.is_default:
+                config.default_llm = llm_config.model_name
+                config.system_settings["default_llm"] = llm_config.model_name
+                config.system_settings["default_model"] = llm_config.model_name
+                for existing_config in config.llm_configs:
+                    existing_config.is_default = existing_config.model_name == llm_config.model_name
+            elif config.default_llm == llm_config.model_name:
+                llm_config.is_default = True
 
             return await self.save_system_config(config)
         except Exception as e:

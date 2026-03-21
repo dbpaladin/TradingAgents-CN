@@ -1,4 +1,4 @@
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List
 import os
@@ -280,6 +280,22 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         """是否为生产环境"""
         return not self.DEBUG
+
+    @field_validator("DEBUG", mode="before")
+    @classmethod
+    def _normalize_debug_value(cls, value):
+        """兼容 bool 之外的常见部署环境写法，如 DEBUG=release / production / dev。"""
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return True
+
+        text = str(value).strip().lower()
+        if text in {"1", "true", "yes", "y", "on", "debug", "dev", "development"}:
+            return True
+        if text in {"0", "false", "no", "n", "off", "release", "prod", "production"}:
+            return False
+        return value
 
     # Ignore any extra environment variables present in .env or process env
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")

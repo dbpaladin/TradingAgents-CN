@@ -678,9 +678,14 @@ def save_modular_reports_to_results_dir(results: Dict[str, Any], stock_symbol: s
                 'title': f'{stock_symbol} 股票技术分析报告',
                 'state_key': 'market_report'
             },
+            'a_share_sentiment_report': {
+                'filename': 'a_share_sentiment_report.md',
+                'title': f'{stock_symbol} A股盘面情绪分析报告',
+                'state_key': 'a_share_sentiment_report'
+            },
             'sentiment_report': {
                 'filename': 'sentiment_report.md',
-                'title': f'{stock_symbol} 市场情绪分析报告',
+                'title': f'{stock_symbol} 公共舆情分析报告',
                 'state_key': 'sentiment_report'
             },
             'news_report': {

@@ -98,6 +98,99 @@ class ConditionalLogic:
         logger.info(f"🔀 [条件判断] ✅ 无tool_calls，返回: Msg Clear Social")
         return "Msg Clear Social"
 
+    def should_continue_emotion(self, state: AgentState):
+        """Determine if A-share sentiment analysis should continue."""
+        from tradingagents.utils.logging_init import get_logger
+        logger = get_logger("agents")
+
+        messages = state["messages"]
+        last_message = messages[-1]
+        tool_call_count = state.get("a_share_sentiment_tool_call_count", 0)
+        max_tool_calls = 3
+        report = state.get("a_share_sentiment_report", "")
+
+        logger.info(f"🔀 [条件判断] should_continue_emotion")
+        logger.info(f"🔀 [条件判断] - 消息数量: {len(messages)}")
+        logger.info(f"🔀 [条件判断] - 报告长度: {len(report)}")
+        logger.info(f"🔧 [死循环修复] - 工具调用次数: {tool_call_count}/{max_tool_calls}")
+
+        if tool_call_count >= max_tool_calls:
+            logger.warning("🔧 [死循环修复] 达到最大工具调用次数，强制结束: Msg Clear Emotion")
+            return "Msg Clear Emotion"
+
+        if report and len(report) > 100:
+            logger.info("🔀 [条件判断] ✅ 报告已完成，返回: Msg Clear Emotion")
+            return "Msg Clear Emotion"
+
+        if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+            logger.info("🔀 [条件判断] 🔧 检测到tool_calls，返回: tools_emotion")
+            return "tools_emotion"
+
+        logger.info("🔀 [条件判断] ✅ 无tool_calls，返回: Msg Clear Emotion")
+        return "Msg Clear Emotion"
+
+    def should_continue_theme_rotation(self, state: AgentState):
+        """Determine if theme rotation analysis should continue."""
+        from tradingagents.utils.logging_init import get_logger
+        logger = get_logger("agents")
+
+        messages = state["messages"]
+        last_message = messages[-1]
+        tool_call_count = state.get("theme_rotation_tool_call_count", 0)
+        max_tool_calls = 3
+        report = state.get("theme_rotation_report", "")
+
+        logger.info("🔀 [条件判断] should_continue_theme_rotation")
+        logger.info(f"🔀 [条件判断] - 消息数量: {len(messages)}")
+        logger.info(f"🔀 [条件判断] - 报告长度: {len(report)}")
+        logger.info(f"🔧 [死循环修复] - 工具调用次数: {tool_call_count}/{max_tool_calls}")
+
+        if tool_call_count >= max_tool_calls:
+            logger.warning("🔧 [死循环修复] 达到最大工具调用次数，强制结束: Msg Clear Theme_rotation")
+            return "Msg Clear Theme_rotation"
+
+        if report and len(report) > 100:
+            logger.info("🔀 [条件判断] ✅ 报告已完成，返回: Msg Clear Theme_rotation")
+            return "Msg Clear Theme_rotation"
+
+        if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+            logger.info("🔀 [条件判断] 🔧 检测到tool_calls，返回: tools_theme_rotation")
+            return "tools_theme_rotation"
+
+        logger.info("🔀 [条件判断] ✅ 无tool_calls，返回: Msg Clear Theme_rotation")
+        return "Msg Clear Theme_rotation"
+
+    def should_continue_institutional_theme(self, state: AgentState):
+        """Determine if institutional theme analysis should continue."""
+        from tradingagents.utils.logging_init import get_logger
+        logger = get_logger("agents")
+
+        messages = state["messages"]
+        last_message = messages[-1]
+        tool_call_count = state.get("institutional_theme_tool_call_count", 0)
+        max_tool_calls = 3
+        report = state.get("institutional_theme_report", "")
+
+        logger.info("🔀 [条件判断] should_continue_institutional_theme")
+        logger.info(f"🔀 [条件判断] - 消息数量: {len(messages)}")
+        logger.info(f"🔀 [条件判断] - 报告长度: {len(report)}")
+        logger.info(f"🔧 [死循环修复] - 工具调用次数: {tool_call_count}/{max_tool_calls}")
+
+        if tool_call_count >= max_tool_calls:
+            logger.warning("🔧 [死循环修复] 达到最大工具调用次数，强制结束: Msg Clear Institutional_theme")
+            return "Msg Clear Institutional_theme"
+
+        if report and len(report) > 100:
+            logger.info("🔀 [条件判断] ✅ 报告已完成，返回: Msg Clear Institutional_theme")
+            return "Msg Clear Institutional_theme"
+
+        if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+            logger.info("🔀 [条件判断] 🔧 检测到tool_calls，返回: tools_institutional_theme")
+            return "tools_institutional_theme"
+
+        logger.info("🔀 [条件判断] ✅ 无tool_calls，返回: Msg Clear Institutional_theme")
+        return "Msg Clear Institutional_theme"
+
     def should_continue_news(self, state: AgentState):
         """Determine if news analysis should continue."""
         from tradingagents.utils.logging_init import get_logger

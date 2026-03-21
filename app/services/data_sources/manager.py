@@ -293,9 +293,24 @@ class DataSourceManager:
                 continue
         return None, None
 
-    def get_news_with_fallback(self, code: str, days: int = 2, limit: int = 50, include_announcements: bool = True) -> Tuple[Optional[List[Dict]], Optional[str]]:
+    def get_news_with_fallback(
+        self,
+        code: str,
+        days: int = 2,
+        limit: int = 50,
+        include_announcements: bool = True,
+        preferred_sources: Optional[List[str]] = None,
+    ) -> Tuple[Optional[List[Dict]], Optional[str]]:
         """按优先级尝试获取新闻与公告，返回(items, source)"""
         available_adapters = self.get_available_adapters()
+
+        if preferred_sources:
+            priority_map = {name: idx for idx, name in enumerate(preferred_sources)}
+            preferred = [a for a in available_adapters if a.name in priority_map]
+            others = [a for a in available_adapters if a.name not in priority_map]
+            preferred.sort(key=lambda a: priority_map.get(a.name, 999))
+            available_adapters = preferred + others
+
         for adapter in available_adapters:
             try:
                 logger.info(f"Trying to fetch news from {adapter.name}")

@@ -170,12 +170,15 @@ def create_llm_by_provider(provider: str, model: str, backend_url: str, temperat
             "CUSTOM_OPENAI_API_KEY"         # 通用环境变量
         ]
 
-        custom_api_key = None
-        for env_var in api_key_candidates:
-            custom_api_key = os.getenv(env_var)
-            if custom_api_key:
-                logger.info(f"✅ 从环境变量 {env_var} 获取到 API Key")
-                break
+        custom_api_key = api_key
+        if custom_api_key:
+            logger.info("✅ 使用调用方传入的 API Key")
+        else:
+            for env_var in api_key_candidates:
+                custom_api_key = os.getenv(env_var)
+                if custom_api_key:
+                    logger.info(f"✅ 从环境变量 {env_var} 获取到 API Key")
+                    break
 
         if not custom_api_key:
             logger.warning(f"⚠️ 未找到自定义厂家 {provider} 的 API Key，尝试使用默认配置")
@@ -206,8 +209,20 @@ class TradingAgentsGraph:
             debug: Whether to run in debug mode
             config: Configuration dictionary. If None, uses default config
         """
-        # Alias 'sentiment' from frontend to 'social' used by graph nodes and conditional logic
-        self.selected_analysts = ["social" if a == "sentiment" else a for a in selected_analysts]
+        # Alias 'sentiment' from frontend to both public sentiment and A-share emotion analysts
+        expanded_analysts = []
+        for analyst in selected_analysts:
+            if analyst == "sentiment":
+                expanded_analysts.extend(["social", "emotion", "theme_rotation"])
+            else:
+                expanded_analysts.append(analyst)
+
+        seen = set()
+        self.selected_analysts = []
+        for analyst in expanded_analysts:
+            if analyst not in seen:
+                self.selected_analysts.append(analyst)
+                seen.add(analyst)
         
         self.debug = debug
         self.config = config or DEFAULT_CONFIG
@@ -687,24 +702,31 @@ class TradingAgentsGraph:
 
             # 获取厂家配置中的 API Key 和 base_url
             provider_name = self.config['llm_provider']
+            quick_api_key = self.config.get("quick_api_key")
+            deep_api_key = self.config.get("deep_api_key")
+            custom_api_key = quick_api_key or deep_api_key
 
-            # 尝试从环境变量获取 API Key（支持多种命名格式）
-            api_key_candidates = [
-                f"{provider_name.upper()}_API_KEY",  # 例如: KYX_API_KEY
-                f"{provider_name}_API_KEY",          # 例如: kyx_API_KEY
-                "CUSTOM_OPENAI_API_KEY"              # 通用环境变量
-            ]
+            if custom_api_key:
+                logger.info(f"✅ [自定义厂家 {provider_name}] 优先使用数据库中的 API Key")
 
-            custom_api_key = None
-            for env_var in api_key_candidates:
-                custom_api_key = os.getenv(env_var)
-                if custom_api_key:
-                    logger.info(f"✅ 从环境变量 {env_var} 获取到 API Key")
-                    break
+            # 数据库未配置时，才退回环境变量
+            if not custom_api_key:
+                api_key_candidates = [
+                    f"{provider_name.upper()}_API_KEY",  # 例如: KYX_API_KEY
+                    f"{provider_name}_API_KEY",          # 例如: kyx_API_KEY
+                    "CUSTOM_OPENAI_API_KEY"              # 通用环境变量
+                ]
+
+                for env_var in api_key_candidates:
+                    custom_api_key = os.getenv(env_var)
+                    if custom_api_key:
+                        logger.info(f"✅ 从环境变量 {env_var} 获取到 API Key")
+                        break
 
             if not custom_api_key:
                 raise ValueError(
-                    f"使用自定义厂家 {provider_name} 需要设置以下环境变量之一:\n"
+                    f"使用自定义厂家 {provider_name} 需要在 Web 配置中设置 API Key，"
+                    f"或提供以下环境变量之一:\n"
                     f"  - {provider_name.upper()}_API_KEY\n"
                     f"  - CUSTOM_OPENAI_API_KEY"
                 )
@@ -835,12 +857,27 @@ class TradingAgentsGraph:
             ),
             "social": ToolNode(
                 [
-                    # 统一工具（推荐）
-                    self.toolkit.get_stock_sentiment_unified,
+                    # 公共舆情工具（推荐）
+                    self.toolkit.get_stock_public_sentiment_unified,
                     # 在线工具（备用）
                     self.toolkit.get_stock_news_openai,
                     # 离线工具（备用）
                     self.toolkit.get_reddit_stock_info,
+                ]
+            ),
+            "emotion": ToolNode(
+                [
+                    self.toolkit.get_a_share_market_sentiment,
+                ]
+            ),
+            "theme_rotation": ToolNode(
+                [
+                    self.toolkit.get_a_share_theme_rotation,
+                ]
+            ),
+            "institutional_theme": ToolNode(
+                [
+                    self.toolkit.get_a_share_institutional_theme_opportunities,
                 ]
             ),
             "news": ToolNode(
@@ -1063,19 +1100,28 @@ class TradingAgentsGraph:
             node_mapping = {
                 # 分析师节点
                 'Market Analyst': "📊 市场分析师",
+                'Emotion Analyst': "🔥 A股情绪分析师",
+                'Theme_rotation Analyst': "🧭 题材轮动分析师",
+                'Institutional_theme Analyst': "🏦 机构布局题材分析师",
                 'Fundamentals Analyst': "💼 基本面分析师",
                 'News Analyst': "📰 新闻分析师",
                 'Social Analyst': "💬 社交媒体分析师",
                 # 工具节点（不发送进度更新，避免重复）
                 'tools_market': None,
+                'tools_emotion': None,
                 'tools_fundamentals': None,
                 'tools_news': None,
                 'tools_social': None,
+                'tools_theme_rotation': None,
+                'tools_institutional_theme': None,
                 # 消息清理节点（不发送进度更新）
                 'Msg Clear Market': None,
+                'Msg Clear Emotion': None,
                 'Msg Clear Fundamentals': None,
                 'Msg Clear News': None,
                 'Msg Clear Social': None,
+                'Msg Clear Theme_rotation': None,
+                'Msg Clear Institutional_theme': None,
                 # 研究员节点
                 'Bull Researcher': "🐂 看涨研究员",
                 'Bear Researcher': "🐻 看跌研究员",
@@ -1306,6 +1352,9 @@ class TradingAgentsGraph:
             "company_of_interest": final_state["company_of_interest"],
             "trade_date": final_state["trade_date"],
             "market_report": final_state["market_report"],
+            "a_share_sentiment_report": final_state.get("a_share_sentiment_report", ""),
+            "theme_rotation_report": final_state.get("theme_rotation_report", ""),
+            "institutional_theme_report": final_state.get("institutional_theme_report", ""),
             "sentiment_report": final_state["sentiment_report"],
             "news_report": final_state["news_report"],
             "fundamentals_report": final_state["fundamentals_report"],

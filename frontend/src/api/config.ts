@@ -35,6 +35,7 @@ export interface LLMConfig {
   provider: string
   model_name: string
   model_display_name?: string  // 新增：模型显示名称
+  is_default?: boolean
   api_key?: string  // 可选，优先从厂家配置获取
   api_base?: string
   max_tokens: number
@@ -430,8 +431,8 @@ export const configApi = {
   // 获取默认模型配置
   getDefaultModels(): Promise<{ quick_analysis_model: string; deep_analysis_model: string }> {
     return ApiClient.get('/api/config/settings').then(settings => ({
-      quick_analysis_model: settings.quick_analysis_model || 'qwen-turbo',
-      deep_analysis_model: settings.deep_analysis_model || 'qwen-max'
+      quick_analysis_model: settings.quick_analysis_model || settings.default_llm || settings.default_model || 'qwen-turbo',
+      deep_analysis_model: settings.deep_analysis_model || settings.default_llm || settings.default_model || 'qwen-max'
     }))
   },
 

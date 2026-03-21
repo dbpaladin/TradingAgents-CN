@@ -24,6 +24,20 @@ class ConfigProvider:
         self._cache_settings = None
         self._cache_time = None
 
+    @staticmethod
+    def _is_model_setting_key(key: str) -> bool:
+        return str(key) in {
+            "llm_provider",
+            "backend_url",
+            "default_llm",
+            "default_model",
+            "quick_analysis_model",
+            "deep_analysis_model",
+            "quick_think_llm",
+            "deep_think_llm",
+            "module_model_overrides",
+        }
+
     def _is_cache_valid(self) -> bool:
         return (
             self._cache_settings is not None
@@ -49,6 +63,8 @@ class ConfigProvider:
         # - try uppercased and dot/space to underscore variants
         merged: Dict[str, Any] = dict(base)
         for k, v in list(base.items()):
+            if self._is_model_setting_key(str(k)):
+                continue
             candidates = [
                 k,
                 k.upper(),
@@ -100,7 +116,7 @@ class ConfigProvider:
         sens_patterns = ("key", "secret", "password", "token", "client_secret")
         meta: Dict[str, Dict[str, Any]] = {}
         for k, v in db_settings.items():
-            env_v = _env_override_for_key(k)
+            env_v = None if self._is_model_setting_key(str(k)) else _env_override_for_key(k)
             source = "environment" if env_v is not None else ("database" if v is not None else "default")
             sensitive = isinstance(k, str) and any(p in k.lower() for p in sens_patterns)
             editable = not sensitive and source != "environment"
@@ -118,4 +134,3 @@ class ConfigProvider:
 
 # Module-level singleton
 provider = ConfigProvider(ttl_seconds=60)
-

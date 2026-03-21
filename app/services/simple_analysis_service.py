@@ -1310,6 +1310,8 @@ class SimpleAnalysisService:
                         time.sleep(15)  # 每个分析师大约15秒
                         if analyst == "market":
                             progress_tracker.update_progress("📊 市场分析师正在分析")
+                        elif analyst == "emotion":
+                            progress_tracker.update_progress("🔥 A股情绪分析师正在分析")
                         elif analyst == "fundamentals":
                             progress_tracker.update_progress("💼 基本面分析师正在分析")
                         elif analyst == "news":
@@ -1529,6 +1531,9 @@ class SimpleAnalysisService:
                 # 定义所有可能的报告字段
                 report_fields = [
                     'market_report',
+                    'a_share_sentiment_report',
+                    'theme_rotation_report',
+                    'institutional_theme_report',
                     'sentiment_report',
                     'news_report',
                     'fundamentals_report',
@@ -2402,6 +2407,9 @@ class SimpleAnalysisService:
                     # 定义所有可能的报告字段
                     report_fields = [
                         'market_report',
+                        'a_share_sentiment_report',
+                        'theme_rotation_report',
+                        'institutional_theme_report',
                         'sentiment_report',
                         'news_report',
                         'fundamentals_report',
@@ -2776,9 +2784,24 @@ class SimpleAnalysisService:
                     'title': f'{stock_symbol} 股票技术分析报告',
                     'state_key': 'market_report'
                 },
+                'a_share_sentiment_report': {
+                    'filename': 'a_share_sentiment_report.md',
+                    'title': f'{stock_symbol} A股盘面情绪分析报告',
+                    'state_key': 'a_share_sentiment_report'
+                },
+                'theme_rotation_report': {
+                    'filename': 'theme_rotation_report.md',
+                    'title': f'{stock_symbol} A股题材轮动分析报告',
+                    'state_key': 'theme_rotation_report'
+                },
+                'institutional_theme_report': {
+                    'filename': 'institutional_theme_report.md',
+                    'title': f'{stock_symbol} 机构布局题材分析报告',
+                    'state_key': 'institutional_theme_report'
+                },
                 'sentiment_report': {
                     'filename': 'sentiment_report.md',
-                    'title': f'{stock_symbol} 市场情绪分析报告',
+                    'title': f'{stock_symbol} 公共舆情分析报告',
                     'state_key': 'sentiment_report'
                 },
                 'news_report': {

@@ -130,6 +130,9 @@ def render_analysis_info(results):
             st.write("**参与的分析师:**")
             analyst_names = {
                 'market': '📈 市场技术分析师',
+                'emotion': '🔥 A股情绪分析师',
+                'theme_rotation': '🧭 题材轮动分析师',
+                'institutional_theme': '🏦 机构布局题材分析师',
                 'fundamentals': '💰 基本面分析师',
                 'news': '📰 新闻分析师',
                 'social_media': '💭 社交媒体分析师',

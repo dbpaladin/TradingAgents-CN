@@ -6,6 +6,7 @@ from langchain_core.messages import RemoveMessage
 from langchain_core.tools import tool
 from datetime import date, timedelta, datetime
 import functools
+import concurrent.futures
 import pandas as pd
 import os
 from dateutil.relativedelta import relativedelta
@@ -1286,6 +1287,322 @@ class Toolkit:
 
     @staticmethod
     @tool
+    @log_tool_call(tool_name="get_a_share_market_sentiment", log_args=True)
+    def get_a_share_market_sentiment(
+        ticker: Annotated[str, "A股股票代码，如 000001 或 600519.SH"],
+        curr_date: Annotated[str, "当前日期，格式：YYYY-MM-DD"]
+    ) -> str:
+        """
+        获取 A 股盘面情绪分析报告。
+        主要关注涨停家数、炸板率、连板高度、晋级率、龙虎榜等短线情绪指标。
+        """
+        try:
+            from tradingagents.utils.stock_utils import StockUtils
+            from tradingagents.tools.analysis.a_share_sentiment import (
+                build_a_share_sentiment_report,
+                get_cached_a_share_sentiment_report,
+            )
+
+            market_info = StockUtils.get_market_info(ticker)
+            if not market_info["is_china"]:
+                return f"# {ticker} A股盘面情绪分析\n\n当前标的为 {market_info['market_name']}，该工具仅支持中国A股。"
+
+            cached = get_cached_a_share_sentiment_report(ticker=ticker, trade_date=curr_date)
+            if cached:
+                logger.info(f"✅ [A股盘面情绪工具] 命中缓存: {ticker} {curr_date}")
+                return cached
+
+            timeout_seconds = int(os.getenv("A_SHARE_SENTIMENT_TIMEOUT_SECONDS", "25"))
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            try:
+                future = executor.submit(build_a_share_sentiment_report, ticker, curr_date)
+                try:
+                    return future.result(timeout=timeout_seconds)
+                except concurrent.futures.TimeoutError:
+                    logger.warning(f"⚠️ [A股盘面情绪工具] 构建超时({timeout_seconds}s): {ticker} {curr_date}")
+                    future.cancel()
+                    cached = get_cached_a_share_sentiment_report(ticker=ticker, trade_date=curr_date)
+                    if cached:
+                        return cached + "\n\n> 注: 本次请求超时，已返回最近一次缓存结果。"
+                    return (
+                        f"# {ticker} A股盘面情绪分析\n\n"
+                        f"当前盘面情绪分析构建超时（>{timeout_seconds}秒），"
+                        "已跳过详细情绪报告以避免拖慢整条分析链路。"
+                    )
+            finally:
+                executor.shutdown(wait=False, cancel_futures=True)
+        except Exception as e:
+            logger.error(f"❌ [A股盘面情绪工具] 执行失败: {e}")
+            return f"# {ticker} A股盘面情绪分析\n\n获取失败: {e}"
+
+    @staticmethod
+    @tool
+    @log_tool_call(tool_name="get_a_share_theme_rotation", log_args=True)
+    def get_a_share_theme_rotation(
+        ticker: Annotated[str, "A股股票代码，如 000001 或 600519.SH"],
+        curr_date: Annotated[str, "当前日期，格式：YYYY-MM-DD"]
+    ) -> str:
+        """
+        获取 A 股题材热点与轮动分析报告。
+        聚焦主线题材、轮动节奏、梯队结构和目标股在题材中的角色定位。
+        """
+        try:
+            from tradingagents.utils.stock_utils import StockUtils
+            from tradingagents.tools.analysis.a_share_theme_rotation import build_a_share_theme_rotation_report
+
+            market_info = StockUtils.get_market_info(ticker)
+            if not market_info["is_china"]:
+                return f"# {ticker} A股题材轮动分析\n\n当前标的为 {market_info['market_name']}，该工具仅支持中国A股。"
+
+            return build_a_share_theme_rotation_report(ticker=ticker, trade_date=curr_date)
+        except Exception as e:
+            logger.error(f"❌ [A股题材轮动工具] 执行失败: {e}")
+            return f"# {ticker} A股题材轮动分析\n\n获取失败: {e}"
+
+    @staticmethod
+    @tool
+    @log_tool_call(tool_name="get_a_share_institutional_theme_opportunities", log_args=True)
+    def get_a_share_institutional_theme_opportunities(
+        ticker: Annotated[str, "A股股票代码，如 000001 或 600519.SH"],
+        curr_date: Annotated[str, "当前日期，格式：YYYY-MM-DD"]
+    ) -> str:
+        """
+        识别 A 股中机构可能正在提前布局或已经开始试盘的候选题材。
+        重点输出酝酿期、试盘期的前瞻方向，而非仅识别已爆发热点。
+        """
+        try:
+            from tradingagents.utils.stock_utils import StockUtils
+            from tradingagents.tools.analysis.a_share_institutional_theme import build_a_share_institutional_theme_report
+
+            market_info = StockUtils.get_market_info(ticker)
+            if not market_info["is_china"]:
+                return f"# {ticker} 机构布局题材分析\n\n当前标的为 {market_info['market_name']}，该工具仅支持中国A股。"
+
+            return build_a_share_institutional_theme_report(ticker=ticker, trade_date=curr_date)
+        except Exception as e:
+            logger.error(f"❌ [机构布局题材工具] 执行失败: {e}")
+            return f"# {ticker} 机构布局题材分析\n\n获取失败: {e}"
+
+    @staticmethod
+    @tool
+    @log_tool_call(tool_name="get_stock_public_sentiment_unified", log_args=True)
+    def get_stock_public_sentiment_unified(
+        ticker: Annotated[str, "股票代码（支持A股、港股、美股）"],
+        curr_date: Annotated[str, "当前日期，格式：YYYY-MM-DD"]
+    ) -> str:
+        """
+        统一的公共舆情/社交情绪分析工具。
+        不包含A股盘面情绪，专注新闻、社交媒体和数据库舆情样本。
+        """
+        logger.info(f"😊 [公共舆情工具] 分析股票: {ticker}")
+
+        def _normalize_symbol_for_cn_hk(raw_ticker: str) -> str:
+            return raw_ticker.upper().replace(".SH", "").replace(".SZ", "").replace(".SS", "") \
+                .replace(".XSHG", "").replace(".XSHE", "").replace(".HK", "")
+
+        def _score_from_label(label: str) -> float:
+            mapping = {
+                "positive": 0.6,
+                "bullish": 0.8,
+                "negative": -0.6,
+                "bearish": -0.8,
+                "neutral": 0.0,
+            }
+            return mapping.get((label or "neutral").lower(), 0.0)
+
+        def _to_float(value) -> float | None:
+            try:
+                if value is None:
+                    return None
+                return float(value)
+            except Exception:
+                return None
+
+        def _sentiment_level(score: float) -> str:
+            if score >= 0.25:
+                return "偏乐观"
+            if score >= 0.08:
+                return "轻度乐观"
+            if score <= -0.25:
+                return "偏悲观"
+            if score <= -0.08:
+                return "轻度悲观"
+            return "中性"
+
+        try:
+            from tradingagents.utils.stock_utils import StockUtils
+
+            market_info = StockUtils.get_market_info(ticker)
+            is_china = market_info["is_china"]
+            is_hk = market_info["is_hk"]
+            is_us = market_info["is_us"]
+            logger.info(f"😊 [公共舆情工具] 股票类型: {market_info['market_name']}")
+
+            result_data = []
+
+            if is_china or is_hk:
+                try:
+                    from tradingagents.config.database_manager import get_mongodb_client, get_database_manager
+
+                    clean_ticker = _normalize_symbol_for_cn_hk(ticker)
+                    db_name = get_database_manager().mongodb_config.get("database", "tradingagents")
+                    client = get_mongodb_client()
+
+                    if not client:
+                        raise RuntimeError("MongoDB 客户端不可用")
+
+                    db = client[db_name]
+                    collection = db.stock_news
+                    now_dt = datetime.now()
+                    seven_days_ago = now_dt - timedelta(days=7)
+                    one_day_ago = now_dt - timedelta(days=1)
+
+                    query_candidates = [
+                        {"symbol": clean_ticker, "publish_time": {"$gte": seven_days_ago}},
+                        {"symbol": ticker.upper(), "publish_time": {"$gte": seven_days_ago}},
+                        {"symbols": clean_ticker, "publish_time": {"$gte": seven_days_ago}},
+                        {"symbols": ticker.upper(), "publish_time": {"$gte": seven_days_ago}},
+                        {"symbol": clean_ticker},
+                        {"symbol": ticker.upper()},
+                    ]
+
+                    news_items = []
+                    selected_query = None
+                    for query in query_candidates:
+                        docs = list(collection.find(query).sort("publish_time", -1).limit(200))
+                        if docs:
+                            news_items = docs
+                            selected_query = query
+                            break
+
+                    if not news_items:
+                        raise RuntimeError("stock_news 中无可用情绪样本")
+
+                    logger.info(
+                        f"😊 [公共舆情工具] 命中{len(news_items)}条新闻样本, 查询条件: {selected_query}"
+                    )
+
+                    pos_count = 0
+                    neg_count = 0
+                    neu_count = 0
+                    source_counter = {}
+                    score_values = []
+                    recent_score_values = []
+                    prev_score_values = []
+                    latest_publish_time = None
+
+                    for item in news_items:
+                        label = (item.get("sentiment") or "neutral").lower()
+                        score = _to_float(item.get("sentiment_score"))
+                        if score is None:
+                            score = _score_from_label(label)
+                        score_values.append(score)
+
+                        publish_time = item.get("publish_time")
+                        if isinstance(publish_time, datetime):
+                            if latest_publish_time is None or publish_time > latest_publish_time:
+                                latest_publish_time = publish_time
+                            if publish_time >= one_day_ago:
+                                recent_score_values.append(score)
+                            else:
+                                prev_score_values.append(score)
+
+                        if score >= 0.1:
+                            pos_count += 1
+                        elif score <= -0.1:
+                            neg_count += 1
+                        else:
+                            neu_count += 1
+
+                        source = item.get("source", "unknown")
+                        source_counter[source] = source_counter.get(source, 0) + 1
+
+                    total_count = len(score_values)
+                    avg_score = (sum(score_values) / total_count) if total_count else 0.0
+                    recent_avg = (sum(recent_score_values) / len(recent_score_values)) if recent_score_values else avg_score
+                    prev_avg = (sum(prev_score_values) / len(prev_score_values)) if prev_score_values else avg_score
+                    momentum = recent_avg - prev_avg
+
+                    sentiment_index = max(1.0, min(10.0, round(5.5 + avg_score * 4.5, 2)))
+                    heat_index = max(1.0, min(10.0, round(2.0 + total_count / 12.0, 2)))
+                    source_diversity = len(source_counter)
+                    confidence = min(0.95, 0.35 + min(total_count, 80) / 160 + min(source_diversity, 8) / 40)
+                    freshness_minutes = None
+                    if latest_publish_time and isinstance(latest_publish_time, datetime):
+                        freshness_minutes = max(0, int((now_dt - latest_publish_time).total_seconds() / 60))
+
+                    dominant_source = sorted(source_counter.items(), key=lambda x: x[1], reverse=True)[:3]
+                    dominant_source_text = "、".join([f"{k}({v})" for k, v in dominant_source]) if dominant_source else "无"
+
+                    momentum_text = "情绪回暖" if momentum > 0.08 else ("情绪转弱" if momentum < -0.08 else "情绪平稳")
+                    freshness_text = f"{freshness_minutes} 分钟前" if freshness_minutes is not None else "未知"
+
+                    sentiment_summary = f"""
+## 中文公共舆情分析
+
+**股票**: {ticker}（{market_info['market_name']}）
+**分析日期**: {curr_date}
+**样本区间**: 最近 7 天（最多 200 条）
+**最新样本时间**: {freshness_text}
+
+### 核心指标
+- 情绪指数（1-10）: **{sentiment_index}**
+- 情绪水平: **{_sentiment_level(avg_score)}**
+- 热度指数（1-10）: **{heat_index}**
+- 置信度: **{round(confidence * 100, 1)}%**
+- 情绪动量（24h vs 历史）: **{momentum:+.3f}（{momentum_text}）**
+
+### 样本分布
+- 正向: {pos_count} 条
+- 中性: {neu_count} 条
+- 负向: {neg_count} 条
+- 来源分散度: {source_diversity} 个来源
+- 主要来源: {dominant_source_text}
+
+### 结论
+- 当前公共舆情处于**{_sentiment_level(avg_score)}**区间，短线舆情信号为**{momentum_text}**。
+- 建议与A股盘面情绪、成交量和价格波动交叉验证，避免单一舆情指标驱动交易决策。
+"""
+                    result_data.append(sentiment_summary.strip())
+                except Exception as db_error:
+                    logger.warning(f"⚠️ [公共舆情工具] 新闻库量化失败，降级到中文情绪摘要: {db_error}")
+                    try:
+                        fallback_data = interface.get_chinese_social_sentiment(ticker, curr_date)
+                        result_data.append(f"## 中文公共舆情（降级）\n{fallback_data}")
+                    except Exception as fallback_error:
+                        result_data.append(f"## 中文公共舆情\n获取失败: {fallback_error}")
+
+            elif is_us:
+                logger.info("🇺🇸 [公共舆情工具] 处理美股舆情")
+                try:
+                    reddit_data = interface.get_reddit_company_news(ticker, curr_date, 7, 5)
+                    result_data.append(f"## 美股Reddit舆情\n{reddit_data}")
+                except Exception as e:
+                    result_data.append(f"## 美股Reddit舆情\n获取失败: {e}")
+            else:
+                result_data.append("## 公共舆情分析\n无法识别股票市场类型，未获取到情绪数据。")
+
+            combined_result = f"""# {ticker} 公共舆情分析
+
+**股票类型**: {market_info['market_name']}
+**分析日期**: {curr_date}
+
+{chr(10).join(result_data)}
+
+---
+*数据来源: 中文市场优先使用 MongoDB `stock_news` 与中文社区舆情；美股使用 Reddit 新闻舆情*
+"""
+
+            logger.info(f"😊 [公共舆情工具] 数据获取完成，总长度: {len(combined_result)}")
+            return combined_result
+
+        except Exception as e:
+            error_msg = f"公共舆情分析工具执行失败: {str(e)}"
+            logger.error(f"❌ [公共舆情工具] {error_msg}")
+            return error_msg
+
+    @staticmethod
+    @tool
     @log_tool_call(tool_name="get_stock_sentiment_unified", log_args=True)
     def get_stock_sentiment_unified(
         ticker: Annotated[str, "股票代码（支持A股、港股、美股）"],
@@ -1350,6 +1667,19 @@ class Toolkit:
 
             if is_china or is_hk:
                 logger.info("🇨🇳🇭🇰 [统一情绪工具] 使用中文市场情绪量化模型")
+
+                if is_china:
+                    try:
+                        from tradingagents.tools.analysis.a_share_sentiment import build_a_share_sentiment_report
+
+                        a_share_report = build_a_share_sentiment_report(
+                            ticker=ticker,
+                            trade_date=curr_date,
+                        )
+                        result_data.append(a_share_report)
+                        logger.info("😊 [统一情绪工具] 成功生成 A 股盘面情绪分析")
+                    except Exception as board_error:
+                        logger.warning(f"⚠️ [统一情绪工具] A股盘面情绪分析失败: {board_error}")
 
                 try:
                     from tradingagents.config.database_manager import get_mongodb_client, get_database_manager
@@ -1500,7 +1830,7 @@ class Toolkit:
 {chr(10).join(result_data)}
 
 ---
-*数据来源: 中文市场优先使用 MongoDB `stock_news` 的情绪字段量化；美股使用 Reddit 新闻舆情*
+*数据来源: A股优先融合东方财富盘口情绪与 MongoDB `stock_news` 舆情量化；港股优先使用中文舆情摘要；美股使用 Reddit 新闻舆情*
 """
 
             logger.info(f"😊 [统一情绪工具] 数据获取完成，总长度: {len(combined_result)}")

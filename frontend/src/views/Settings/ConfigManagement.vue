@@ -264,9 +264,14 @@
                   <!-- 状态 -->
                   <el-table-column label="状态" width="80" align="center">
                     <template #default="{ row }">
-                      <el-tag :type="row.enabled ? 'success' : 'danger'" size="small">
-                        {{ row.enabled ? '启用' : '禁用' }}
-                      </el-tag>
+                      <div class="status-column">
+                        <el-tag :type="row.enabled ? 'success' : 'danger'" size="small">
+                          {{ row.enabled ? '启用' : '禁用' }}
+                        </el-tag>
+                        <el-tag v-if="row.is_default" type="warning" size="small">
+                          默认
+                        </el-tag>
+                      </div>
                     </template>
                   </el-table-column>
 
@@ -341,6 +346,15 @@
                         @click="testLLMConfig(row)"
                       >
                         测试
+                      </el-button>
+                      <el-button
+                        size="small"
+                        type="success"
+                        plain
+                        :disabled="row.is_default"
+                        @click="setDefaultLLM(row.model_name)"
+                      >
+                        {{ row.is_default ? '默认中' : '设为默认' }}
                       </el-button>
                       <el-button
                         size="small"
@@ -1784,6 +1798,7 @@ const setDefaultLLM = async (modelName: string) => {
   try {
     await configApi.setDefaultLLM(modelName)
     defaultLLM.value = modelName
+    await loadLLMConfigs()
     buildLLMConfigGroups() // 重新构建分组以更新排序
     ElMessage.success('默认大模型设置成功')
   } catch (error) {

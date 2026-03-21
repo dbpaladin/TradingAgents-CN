@@ -56,6 +56,9 @@ class GraphSetup:
         Args:
             selected_analysts (list): List of analyst types to include. Options are:
                 - "market": Market analyst
+                - "emotion": A-share sentiment analyst
+                - "theme_rotation": A-share theme rotation analyst
+                - "institutional_theme": Institutional theme analyst
                 - "social": Social media analyst
                 - "news": News analyst
                 - "fundamentals": Fundamentals analyst
@@ -101,6 +104,27 @@ class GraphSetup:
             )
             delete_nodes["social"] = create_msg_delete()
             tool_nodes["social"] = self.tool_nodes["social"]
+
+        if "emotion" in selected_analysts:
+            analyst_nodes["emotion"] = create_a_share_sentiment_analyst(
+                self.quick_thinking_llm, self.toolkit
+            )
+            delete_nodes["emotion"] = create_msg_delete()
+            tool_nodes["emotion"] = self.tool_nodes["emotion"]
+
+        if "theme_rotation" in selected_analysts:
+            analyst_nodes["theme_rotation"] = create_theme_rotation_analyst(
+                self.quick_thinking_llm, self.toolkit
+            )
+            delete_nodes["theme_rotation"] = create_msg_delete()
+            tool_nodes["theme_rotation"] = self.tool_nodes["theme_rotation"]
+
+        if "institutional_theme" in selected_analysts:
+            analyst_nodes["institutional_theme"] = create_institutional_theme_analyst(
+                self.quick_thinking_llm, self.toolkit
+            )
+            delete_nodes["institutional_theme"] = create_msg_delete()
+            tool_nodes["institutional_theme"] = self.tool_nodes["institutional_theme"]
 
         if "news" in selected_analysts:
             analyst_nodes["news"] = create_news_analyst(

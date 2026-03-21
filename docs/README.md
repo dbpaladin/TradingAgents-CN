@@ -76,6 +76,7 @@
 - [代码结构](./development/code-structure.md) - 代码组织结构
 - [扩展开发](./development/extending.md) - 如何扩展框架
 - [测试指南](./development/testing.md) - 测试策略和方法
+- [A股研报质量优化记录](./improvements/a-share-report-quality-upgrade-2026-03-21.md) - `601669` 报告数据补齐、研报化升级与网页链路同步说明
 
 ### 📋 版本发布 (v0.1.7更新)
 - [更新日志](./releases/CHANGELOG.md) - 所有版本更新记录 ✨
