@@ -603,15 +603,30 @@ async function loadResult(taskId: string) {
   }
 }
 
-async function loadTaskHistory() {
+async function loadTaskHistory(options?: { autoResumeRunning?: boolean }) {
+  const autoResumeRunning = options?.autoResumeRunning ?? true
   loadingHistory.value = true
   try {
     const res = await backtestApi.listTasks({ limit: 20 })
     taskHistory.value = (res.data?.tasks || (res as any).tasks || []) as BacktestTaskListItem[]
-    // 如果有运行中的任务，自动轮询
-    const running = taskHistory.value.find(t => t.status === 'running' && t.task_id !== currentTaskId.value)
+
+    const shouldAutoResumeRunningTask =
+      autoResumeRunning &&
+      !route.query.task_id &&
+      !currentTaskId.value &&
+      !runningTaskStatus.value &&
+      !backtestResult.value &&
+      !failedErrorMsg.value
+
+    // 仅在页面没有明确展示任何任务时，才自动恢复运行中的任务
+    const running = shouldAutoResumeRunningTask
+      ? taskHistory.value.find(t => t.status === 'running' || t.status === 'pending')
+      : null
+
     if (running) {
       currentTaskId.value = running.task_id
+      backtestResult.value = null
+      failedErrorMsg.value = null
       startPolling(running.task_id)
     }
   } catch (e) {
@@ -622,13 +637,17 @@ async function loadTaskHistory() {
 }
 
 async function selectTask(task: BacktestTaskListItem) {
+  stopPolling()
   currentTaskId.value = task.task_id
+
   if (task.status === 'completed') {
     runningTaskStatus.value = null
     failedErrorMsg.value = null
     await loadResult(task.task_id)
-  } else if (task.status === 'running') {
+  } else if (task.status === 'running' || task.status === 'pending') {
     backtestResult.value = null
+    failedErrorMsg.value = null
+    runningTaskStatus.value = null
     startPolling(task.task_id)
   } else if (task.status === 'failed') {
     backtestResult.value = null
@@ -696,16 +715,20 @@ function renderChart() {
 }
 
 onMounted(async () => {
+  const taskIdFromQuery = route.query.task_id as string | undefined
+
   // 恢复历史记录
-  await Promise.all([loadTaskHistory(), initializeModelSettings()])
+  await Promise.all([
+    loadTaskHistory({ autoResumeRunning: !taskIdFromQuery }),
+    initializeModelSettings()
+  ])
   window.addEventListener('resize', () => chartInstance?.resize())
 
   // 如果路由带 task_id（来自任务中心的“查看结果”跳转）,自动加载该任务
-  const taskIdFromQuery = route.query.task_id as string | undefined
   if (taskIdFromQuery) {
     const matched = taskHistory.value.find(t => t.task_id === taskIdFromQuery)
     if (matched) {
-      selectTask(matched)
+      await selectTask(matched)
     } else {
       // 任务列表中不在（比如平常加载不到），直接尝试加载结果
       currentTaskId.value = taskIdFromQuery

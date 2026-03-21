@@ -1304,61 +1304,194 @@ class Toolkit:
         """
         logger.info(f"😊 [统一情绪工具] 分析股票: {ticker}")
 
+        def _normalize_symbol_for_cn_hk(raw_ticker: str) -> str:
+            return raw_ticker.upper().replace(".SH", "").replace(".SZ", "").replace(".SS", "") \
+                .replace(".XSHG", "").replace(".XSHE", "").replace(".HK", "")
+
+        def _score_from_label(label: str) -> float:
+            mapping = {
+                "positive": 0.6,
+                "bullish": 0.8,
+                "negative": -0.6,
+                "bearish": -0.8,
+                "neutral": 0.0,
+            }
+            return mapping.get((label or "neutral").lower(), 0.0)
+
+        def _to_float(value) -> float | None:
+            try:
+                if value is None:
+                    return None
+                return float(value)
+            except Exception:
+                return None
+
+        def _sentiment_level(score: float) -> str:
+            if score >= 0.25:
+                return "偏乐观"
+            if score >= 0.08:
+                return "轻度乐观"
+            if score <= -0.25:
+                return "偏悲观"
+            if score <= -0.08:
+                return "轻度悲观"
+            return "中性"
+
         try:
             from tradingagents.utils.stock_utils import StockUtils
 
-            # 自动识别股票类型
             market_info = StockUtils.get_market_info(ticker)
-            is_china = market_info['is_china']
-            is_hk = market_info['is_hk']
-            is_us = market_info['is_us']
-
+            is_china = market_info["is_china"]
+            is_hk = market_info["is_hk"]
+            is_us = market_info["is_us"]
             logger.info(f"😊 [统一情绪工具] 股票类型: {market_info['market_name']}")
 
             result_data = []
 
             if is_china or is_hk:
-                # 中国A股和港股：使用社交媒体情绪分析
-                logger.info(f"🇨🇳🇭🇰 [统一情绪工具] 处理中文市场情绪...")
+                logger.info("🇨🇳🇭🇰 [统一情绪工具] 使用中文市场情绪量化模型")
 
                 try:
-                    # 可以集成微博、雪球、东方财富等中文社交媒体情绪
-                    # 目前使用基础的情绪分析
+                    from tradingagents.config.database_manager import get_mongodb_client, get_database_manager
+
+                    clean_ticker = _normalize_symbol_for_cn_hk(ticker)
+                    db_name = get_database_manager().mongodb_config.get("database", "tradingagents")
+                    client = get_mongodb_client()
+
+                    if not client:
+                        raise RuntimeError("MongoDB 客户端不可用")
+
+                    db = client[db_name]
+                    collection = db.stock_news
+                    now_dt = datetime.now()
+                    seven_days_ago = now_dt - timedelta(days=7)
+                    one_day_ago = now_dt - timedelta(days=1)
+
+                    query_candidates = [
+                        {"symbol": clean_ticker, "publish_time": {"$gte": seven_days_ago}},
+                        {"symbol": ticker.upper(), "publish_time": {"$gte": seven_days_ago}},
+                        {"symbols": clean_ticker, "publish_time": {"$gte": seven_days_ago}},
+                        {"symbols": ticker.upper(), "publish_time": {"$gte": seven_days_ago}},
+                        {"symbol": clean_ticker},
+                        {"symbol": ticker.upper()},
+                    ]
+
+                    news_items = []
+                    selected_query = None
+                    for query in query_candidates:
+                        docs = list(collection.find(query).sort("publish_time", -1).limit(200))
+                        if docs:
+                            news_items = docs
+                            selected_query = query
+                            break
+
+                    if not news_items:
+                        raise RuntimeError("stock_news 中无可用情绪样本")
+
+                    logger.info(
+                        f"😊 [统一情绪工具] 命中{len(news_items)}条新闻样本, 查询条件: {selected_query}"
+                    )
+
+                    pos_count = 0
+                    neg_count = 0
+                    neu_count = 0
+                    source_counter = {}
+                    score_values = []
+                    recent_score_values = []
+                    prev_score_values = []
+                    latest_publish_time = None
+
+                    for item in news_items:
+                        label = (item.get("sentiment") or "neutral").lower()
+                        score = _to_float(item.get("sentiment_score"))
+                        if score is None:
+                            score = _score_from_label(label)
+                        score_values.append(score)
+
+                        publish_time = item.get("publish_time")
+                        if isinstance(publish_time, datetime):
+                            if latest_publish_time is None or publish_time > latest_publish_time:
+                                latest_publish_time = publish_time
+                            if publish_time >= one_day_ago:
+                                recent_score_values.append(score)
+                            else:
+                                prev_score_values.append(score)
+
+                        if score >= 0.1:
+                            pos_count += 1
+                        elif score <= -0.1:
+                            neg_count += 1
+                        else:
+                            neu_count += 1
+
+                        source = item.get("source", "unknown")
+                        source_counter[source] = source_counter.get(source, 0) + 1
+
+                    total_count = len(score_values)
+                    avg_score = (sum(score_values) / total_count) if total_count else 0.0
+                    recent_avg = (sum(recent_score_values) / len(recent_score_values)) if recent_score_values else avg_score
+                    prev_avg = (sum(prev_score_values) / len(prev_score_values)) if prev_score_values else avg_score
+                    momentum = recent_avg - prev_avg
+
+                    sentiment_index = max(1.0, min(10.0, round(5.5 + avg_score * 4.5, 2)))
+                    heat_index = max(1.0, min(10.0, round(2.0 + total_count / 12.0, 2)))
+                    source_diversity = len(source_counter)
+                    confidence = min(0.95, 0.35 + min(total_count, 80) / 160 + min(source_diversity, 8) / 40)
+                    freshness_minutes = None
+                    if latest_publish_time and isinstance(latest_publish_time, datetime):
+                        freshness_minutes = max(0, int((now_dt - latest_publish_time).total_seconds() / 60))
+
+                    dominant_source = sorted(source_counter.items(), key=lambda x: x[1], reverse=True)[:3]
+                    dominant_source_text = "、".join([f"{k}({v})" for k, v in dominant_source]) if dominant_source else "无"
+
+                    momentum_text = "情绪回暖" if momentum > 0.08 else ("情绪转弱" if momentum < -0.08 else "情绪平稳")
+                    freshness_text = f"{freshness_minutes} 分钟前" if freshness_minutes is not None else "未知"
+
                     sentiment_summary = f"""
-## 中文市场情绪分析
+## 中文市场情绪分析（量化版）
 
-**股票**: {ticker} ({market_info['market_name']})
+**股票**: {ticker}（{market_info['market_name']}）
 **分析日期**: {curr_date}
+**样本区间**: 最近 7 天（最多 200 条）
+**最新样本时间**: {freshness_text}
 
-### 市场情绪概况
-- 由于中文社交媒体情绪数据源暂未完全集成，当前提供基础分析
-- 建议关注雪球、东方财富、同花顺等平台的讨论热度
-- 港股市场还需关注香港本地财经媒体情绪
+### 核心指标
+- 情绪指数（1-10）: **{sentiment_index}**
+- 情绪水平: **{_sentiment_level(avg_score)}**
+- 热度指数（1-10）: **{heat_index}**
+- 置信度: **{round(confidence * 100, 1)}%**
+- 情绪动量（24h vs 历史）: **{momentum:+.3f}（{momentum_text}）**
 
-### 情绪指标
-- 整体情绪: 中性
-- 讨论热度: 待分析
-- 投资者信心: 待评估
+### 样本分布
+- 正向: {pos_count} 条
+- 中性: {neu_count} 条
+- 负向: {neg_count} 条
+- 来源分散度: {source_diversity} 个来源
+- 主要来源: {dominant_source_text}
 
-*注：完整的中文社交媒体情绪分析功能正在开发中*
+### 结论
+- 当前舆情处于**{_sentiment_level(avg_score)}**区间，短线情绪信号为**{momentum_text}**。
+- 建议结合成交量与价格波动验证情绪信号，避免单一舆情指标驱动交易决策。
 """
-                    result_data.append(sentiment_summary)
-                except Exception as e:
-                    result_data.append(f"## 中文市场情绪\n获取失败: {e}")
+                    result_data.append(sentiment_summary.strip())
+                except Exception as db_error:
+                    logger.warning(f"⚠️ [统一情绪工具] 新闻库量化失败，降级到中文情绪摘要: {db_error}")
+                    try:
+                        fallback_data = interface.get_chinese_social_sentiment(ticker, curr_date)
+                        result_data.append(f"## 中文市场情绪（降级）\n{fallback_data}")
+                    except Exception as fallback_error:
+                        result_data.append(f"## 中文市场情绪\n获取失败: {fallback_error}")
 
-            else:
-                # 美股：使用Reddit情绪分析
-                logger.info(f"🇺🇸 [统一情绪工具] 处理美股情绪...")
-
+            elif is_us:
+                logger.info("🇺🇸 [统一情绪工具] 处理美股情绪")
                 try:
-                    from tradingagents.dataflows.interface import get_reddit_sentiment
-
-                    sentiment_data = get_reddit_sentiment(ticker, curr_date)
-                    result_data.append(f"## 美股Reddit情绪\n{sentiment_data}")
+                    reddit_data = interface.get_reddit_company_news(ticker, curr_date, 7, 5)
+                    result_data.append(f"## 美股Reddit舆情\n{reddit_data}")
                 except Exception as e:
-                    result_data.append(f"## 美股Reddit情绪\n获取失败: {e}")
+                    result_data.append(f"## 美股Reddit舆情\n获取失败: {e}")
+            else:
+                result_data.append("## 情绪分析\n无法识别股票市场类型，未获取到情绪数据。")
 
-            # 组合所有数据
             combined_result = f"""# {ticker} 情绪分析
 
 **股票类型**: {market_info['market_name']}
@@ -1367,7 +1500,7 @@ class Toolkit:
 {chr(10).join(result_data)}
 
 ---
-*数据来源: 根据股票类型自动选择最适合的情绪数据源*
+*数据来源: 中文市场优先使用 MongoDB `stock_news` 的情绪字段量化；美股使用 Reddit 新闻舆情*
 """
 
             logger.info(f"😊 [统一情绪工具] 数据获取完成，总长度: {len(combined_result)}")

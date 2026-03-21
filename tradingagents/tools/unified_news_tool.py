@@ -350,19 +350,8 @@ class UnifiedNewsAnalyzer:
         except Exception as e:
             logger.warning(f"[统一新闻工具] Google新闻获取失败: {e}")
         
-        # 优先级3: OpenAI全球新闻
-        try:
-            if hasattr(self.toolkit, 'get_global_news_openai'):
-                logger.info(f"[统一新闻工具] 尝试OpenAI全球新闻...")
-                # 使用LangChain工具的正确调用方式：.invoke()方法和字典参数
-                result = self.toolkit.get_global_news_openai.invoke({"curr_date": curr_date})
-                if result and len(result.strip()) > 50:
-                    logger.info(f"[统一新闻工具] ✅ OpenAI新闻获取成功: {len(result)} 字符")
-                    return self._format_news_result(result, "OpenAI全球新闻", model_info)
-        except Exception as e:
-            logger.warning(f"[统一新闻工具] OpenAI新闻获取失败: {e}")
-        
-        return "❌ 无法获取A股新闻数据，所有新闻源均不可用"
+        # A股专用策略：不使用“全球宏观新闻”作为默认兜底，避免与个股新闻偏离
+        return "❌ 无法获取A股新闻数据（已尝试：数据库缓存/AKShare同步/实时中文新闻/Google新闻）"
     
     def _get_hk_share_news(self, stock_code: str, max_news: int, model_info: str = "") -> str:
         """获取港股新闻"""
@@ -578,7 +567,7 @@ def create_unified_news_tool(toolkit):
 功能:
 - 自动识别股票类型（A股/港股/美股）
 - 根据股票类型选择最佳新闻源
-- A股: 优先东方财富 -> Google中文 -> OpenAI
+- A股: 优先数据库缓存/AKShare同步 -> 东方财富实时中文新闻 -> Google中文
 - 港股: 优先Google -> OpenAI -> 实时新闻
 - 美股: 优先OpenAI -> Google英文 -> FinnHub
 - 返回格式化的新闻内容
