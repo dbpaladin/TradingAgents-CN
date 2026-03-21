@@ -34,11 +34,11 @@ git clone https://github.com/hsliuping/TradingAgents-CN.git
 cd TradingAgents-CN
 
 # 2. 创建虚拟环境
-python -m venv env
+python -m venv .venv
 
 # 3. 激活虚拟环境
-# Windows: env\Scripts\activate
-# macOS/Linux: source env/bin/activate
+# Windows: .venv\Scripts\activate
+# macOS/Linux: source .venv/bin/activate
 
 # 4. 安装依赖
 pip install -r requirements.txt
@@ -56,6 +56,16 @@ python -m streamlit run web/app.py
 # 下载并运行自动安装脚本
 python scripts/setup/quick_install.py
 ```
+
+### 🧪 测试环境说明
+
+项目测试命令建议优先使用项目虚拟环境，而不是系统 Python：
+
+```bash
+./.venv/bin/python -m pytest tests/test_backtest_service.py -q
+```
+
+如果系统里 `python` 或 `pytest` 命令不可用，优先确认 `.venv` 是否存在并已安装依赖。
 
 ## 🔑 必需的API密钥
 
@@ -151,6 +161,19 @@ tail -f logs/tradingagents.log
 研究深度: 1级（快速测试）
 分析师: 市场分析师 + 基本面分析师
 ```
+
+## ⚡ 回测提速建议
+
+如果你使用的是新版前端回测页面，除了研究深度和分析师数量外，还可以直接选择“回测速度模式”：
+
+- **标准**：每个交易日都重新运行 AI，结果最细
+- **加速**：每 3 个交易日运行一次 AI，中间交易日复用上次信号
+- **极速**：每 5 个交易日运行一次 AI，适合大区间粗筛
+
+实战建议：
+
+- 首轮筛查：`快速` 深度 + `market/fundamentals` + `加速/极速`
+- 二次验证：缩短区间后切回 `标准`
 
 ## ❓ 常见问题
 

@@ -5,16 +5,22 @@
 echo "🚀 TradingAgents-CN Backend Launcher"
 echo "=================================================="
 
-# 检查Python是否安装
-if ! command -v python3 &> /dev/null; then
-    if ! command -v python &> /dev/null; then
-        echo "❌ Python is not installed or not in PATH"
-        exit 1
-    else
-        PYTHON_CMD="python"
-    fi
+# 优先使用项目虚拟环境，避免系统 Python 缺少依赖
+if [ -x ".venv/bin/python" ]; then
+    PYTHON_CMD="$(pwd)/.venv/bin/python"
+    echo "✅ 使用项目虚拟环境: $PYTHON_CMD"
 else
-    PYTHON_CMD="python3"
+    # 检查Python是否安装
+    if ! command -v python3 &> /dev/null; then
+        if ! command -v python &> /dev/null; then
+            echo "❌ Python is not installed or not in PATH"
+            exit 1
+        else
+            PYTHON_CMD="python"
+        fi
+    else
+        PYTHON_CMD="python3"
+    fi
 fi
 
 # 检查Python版本
