@@ -57,6 +57,7 @@ class GraphSetup:
             selected_analysts (list): List of analyst types to include. Options are:
                 - "market": Market analyst
                 - "emotion": A-share sentiment analyst
+                - "fund_flow": A-share fund flow analyst
                 - "theme_rotation": A-share theme rotation analyst
                 - "institutional_theme": Institutional theme analyst
                 - "social": Social media analyst
@@ -111,6 +112,13 @@ class GraphSetup:
             )
             delete_nodes["emotion"] = create_msg_delete()
             tool_nodes["emotion"] = self.tool_nodes["emotion"]
+
+        if "fund_flow" in selected_analysts:
+            analyst_nodes["fund_flow"] = create_fund_flow_analyst(
+                self.quick_thinking_llm, self.toolkit
+            )
+            delete_nodes["fund_flow"] = create_msg_delete()
+            tool_nodes["fund_flow"] = self.tool_nodes["fund_flow"]
 
         if "theme_rotation" in selected_analysts:
             analyst_nodes["theme_rotation"] = create_theme_rotation_analyst(

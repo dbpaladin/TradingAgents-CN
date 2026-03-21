@@ -18,6 +18,7 @@ def create_neutral_debator(llm):
 
         market_research_report = state["market_report"]
         a_share_sentiment_report = state.get("a_share_sentiment_report", "")
+        fund_flow_report = state.get("fund_flow_report", "")
         theme_rotation_report = state.get("theme_rotation_report", "")
         institutional_theme_report = state.get("institutional_theme_report", "")
         sentiment_report = state["sentiment_report"]
@@ -28,6 +29,7 @@ def create_neutral_debator(llm):
 
         market_research_report = compact_text(market_research_report, 1400, "neutral.market_report")
         a_share_sentiment_report = compact_text(a_share_sentiment_report, 900, "neutral.a_share_sentiment")
+        fund_flow_report = compact_text(fund_flow_report, 900, "neutral.fund_flow")
         theme_rotation_report = compact_text(theme_rotation_report, 900, "neutral.theme_rotation")
         institutional_theme_report = compact_text(institutional_theme_report, 900, "neutral.institutional_theme")
         sentiment_report = compact_text(sentiment_report, 600, "neutral.sentiment")
@@ -42,6 +44,7 @@ def create_neutral_debator(llm):
         logger.info(f"📊 [Neutral Analyst] 输入数据长度统计:")
         logger.info(f"  - market_report: {len(market_research_report):,} 字符 (~{len(market_research_report)//4:,} tokens)")
         logger.info(f"  - a_share_sentiment_report: {len(a_share_sentiment_report):,} 字符 (~{len(a_share_sentiment_report)//4:,} tokens)")
+        logger.info(f"  - fund_flow_report: {len(fund_flow_report):,} 字符 (~{len(fund_flow_report)//4:,} tokens)")
         logger.info(f"  - theme_rotation_report: {len(theme_rotation_report):,} 字符 (~{len(theme_rotation_report)//4:,} tokens)")
         logger.info(f"  - institutional_theme_report: {len(institutional_theme_report):,} 字符 (~{len(institutional_theme_report)//4:,} tokens)")
         logger.info(f"  - sentiment_report: {len(sentiment_report):,} 字符 (~{len(sentiment_report)//4:,} tokens)")
@@ -53,7 +56,7 @@ def create_neutral_debator(llm):
         logger.info(f"  - current_safe_response: {len(current_safe_response):,} 字符 (~{len(current_safe_response)//4:,} tokens)")
 
         # 计算总prompt长度
-        total_prompt_length = (len(market_research_report) + len(a_share_sentiment_report) + len(theme_rotation_report) + len(institutional_theme_report) + len(sentiment_report) +
+        total_prompt_length = (len(market_research_report) + len(a_share_sentiment_report) + len(fund_flow_report) + len(theme_rotation_report) + len(institutional_theme_report) + len(sentiment_report) +
                               len(news_report) + len(fundamentals_report) +
                               len(trader_decision) + len(history) +
                               len(current_risky_response) + len(current_safe_response))
@@ -67,6 +70,7 @@ def create_neutral_debator(llm):
 
 市场研究报告：{market_research_report}
 A股盘面情绪报告：{a_share_sentiment_report}
+A股资金面报告：{fund_flow_report}
 A股题材轮动报告：{theme_rotation_report}
 机构布局题材报告：{institutional_theme_report}
 社交媒体情绪报告：{sentiment_report}
@@ -74,12 +78,18 @@ A股题材轮动报告：{theme_rotation_report}
 公司基本面报告：{fundamentals_report}
 以下是当前对话历史：{history} 以下是激进分析师的最后回应：{current_risky_response} 以下是安全分析师的最后回应：{current_safe_response}。如果其他观点没有回应，请不要虚构，只需提出您的观点。
 
-通过批判性地分析双方来积极参与，解决激进和保守论点中的弱点，倡导更平衡的方法。挑战他们的每个观点，说明为什么适度风险策略可能提供两全其美的效果，既提供增长潜力又防范极端波动。专注于辩论而不是简单地呈现数据，旨在表明平衡的观点可以带来最可靠的结果。请用中文以对话方式输出，就像您在说话一样，不使用任何特殊格式。"""
+通过批判性地分析双方来积极参与，解决激进和保守论点中的弱点，倡导更平衡的方法。挑战他们的每个观点，说明为什么适度风险策略可能提供两全其美的效果，既提供增长潜力又防范极端波动。专注于辩论而不是简单地呈现数据，旨在表明平衡的观点可以带来最可靠的结果。
+
+输出要求：
+- 只写最重要的 3 条平衡观点
+- 直接指出激进和保守各自的问题
+- 总长度控制在 600 字以内
+- 请用中文输出"""
 
         logger.info(f"⏱️ [Neutral Analyst] 开始调用LLM...")
         llm_start_time = time.time()
 
-        response = llm.invoke(prompt)
+        response = llm.bind(max_tokens=800).invoke(prompt)
 
         llm_elapsed = time.time() - llm_start_time
         logger.info(f"⏱️ [Neutral Analyst] LLM调用完成，耗时: {llm_elapsed:.2f}秒")

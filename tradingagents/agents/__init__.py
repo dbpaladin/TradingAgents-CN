@@ -6,6 +6,7 @@ from .analysts.fundamentals_analyst import create_fundamentals_analyst
 from .analysts.market_analyst import create_market_analyst
 from .analysts.news_analyst import create_news_analyst
 from .analysts.a_share_sentiment_analyst import create_a_share_sentiment_analyst
+from .analysts.fund_flow_analyst import create_fund_flow_analyst
 from .analysts.theme_rotation_analyst import create_theme_rotation_analyst
 from .analysts.institutional_theme_analyst import create_institutional_theme_analyst
 from .analysts.social_media_analyst import create_social_media_analyst
@@ -41,6 +42,7 @@ __all__ = [
     "create_neutral_debator",
     "create_news_analyst",
     "create_a_share_sentiment_analyst",
+    "create_fund_flow_analyst",
     "create_theme_rotation_analyst",
     "create_institutional_theme_analyst",
     "create_risky_debator",

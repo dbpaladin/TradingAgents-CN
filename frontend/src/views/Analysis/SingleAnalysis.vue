@@ -1276,6 +1276,9 @@ const getAnalysisReports = (data: any) => {
     // 分析师团队
     { key: 'market_report', title: '📈 市场技术分析', category: '分析师团队' },
     { key: 'a_share_sentiment_report', title: '🔥 A股盘面情绪', category: '分析师团队' },
+    { key: 'fund_flow_report', title: '💸 A股资金面', category: '分析师团队' },
+    { key: 'theme_rotation_report', title: '🧭 A股题材轮动', category: '分析师团队' },
+    { key: 'institutional_theme_report', title: '🏦 机构布局题材', category: '分析师团队' },
     { key: 'sentiment_report', title: '💬 公共舆情分析', category: '分析师团队' },
     { key: 'news_report', title: '📰 新闻事件分析', category: '分析师团队' },
     { key: 'fundamentals_report', title: '💰 基本面分析', category: '分析师团队' },

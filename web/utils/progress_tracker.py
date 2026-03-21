@@ -57,6 +57,7 @@ class SmartAnalysisProgressTracker:
         name_map = {
             'market': '市场分析师',
             'emotion': 'A股情绪分析师',
+            'fund_flow': '资金面分析师',
             'theme_rotation': '题材轮动分析师',
             'institutional_theme': '机构布局题材分析师',
             'fundamentals': '基本面分析师',

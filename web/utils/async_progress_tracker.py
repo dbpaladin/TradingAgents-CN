@@ -246,6 +246,7 @@ class AsyncProgressTracker:
         name_map = {
             'market': '市场分析师',
             'emotion': 'A股情绪分析师',
+            'fund_flow': '资金面分析师',
             'theme_rotation': '题材轮动分析师',
             'institutional_theme': '机构布局题材分析师',
             'fundamentals': '基本面分析师',
@@ -277,6 +278,10 @@ class AsyncProgressTracker:
             'emotion': {
                 "name": "🔥 A股情绪分析",
                 "description": "分析涨停梯队、炸板率、连板高度和情绪周期"
+            },
+            'fund_flow': {
+                "name": "💸 资金面分析",
+                "description": "分析龙虎榜、机构/游资风格、北向和融资融券等资金线索"
             },
             'theme_rotation': {
                 "name": "🧭 题材轮动分析",

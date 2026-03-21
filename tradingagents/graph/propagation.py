@@ -47,6 +47,7 @@ class Propagator:
             ),
             "market_report": "",
             "a_share_sentiment_report": "",
+            "fund_flow_report": "",
             "theme_rotation_report": "",
             "institutional_theme_report": "",
             "fundamentals_report": "",

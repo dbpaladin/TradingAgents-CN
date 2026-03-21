@@ -197,6 +197,20 @@ def render_analysis_form():
                 )
 
             if market_type == "A股":
+                fund_flow_analyst = st.checkbox(
+                    "💸 资金面分析师",
+                    value='fund_flow' in cached_analysts or 'sentiment' in cached_analysts,
+                    help="分析龙虎榜、机构/游资风格、北向和融资融券等资金线索"
+                )
+            else:
+                fund_flow_analyst = st.checkbox(
+                    "💸 资金面分析师",
+                    value=False,
+                    disabled=True,
+                    help="仅支持A股市场"
+                )
+
+            if market_type == "A股":
                 institutional_theme_analyst = st.checkbox(
                     "🏦 机构布局题材分析师",
                     value='institutional_theme' in cached_analysts,
@@ -228,6 +242,8 @@ def render_analysis_form():
             selected_analysts.append(("market", "市场分析师"))
         if emotion_analyst:
             selected_analysts.append(("emotion", "A股情绪分析师"))
+        if fund_flow_analyst:
+            selected_analysts.append(("fund_flow", "资金面分析师"))
         if theme_rotation_analyst:
             selected_analysts.append(("theme_rotation", "题材轮动分析师"))
         if institutional_theme_analyst:

@@ -18,6 +18,7 @@ def create_risky_debator(llm):
 
         market_research_report = state["market_report"]
         a_share_sentiment_report = state.get("a_share_sentiment_report", "")
+        fund_flow_report = state.get("fund_flow_report", "")
         theme_rotation_report = state.get("theme_rotation_report", "")
         institutional_theme_report = state.get("institutional_theme_report", "")
         sentiment_report = state["sentiment_report"]
@@ -28,6 +29,7 @@ def create_risky_debator(llm):
 
         market_research_report = compact_text(market_research_report, 1400, "risky.market_report")
         a_share_sentiment_report = compact_text(a_share_sentiment_report, 900, "risky.a_share_sentiment")
+        fund_flow_report = compact_text(fund_flow_report, 900, "risky.fund_flow")
         theme_rotation_report = compact_text(theme_rotation_report, 900, "risky.theme_rotation")
         institutional_theme_report = compact_text(institutional_theme_report, 900, "risky.institutional_theme")
         sentiment_report = compact_text(sentiment_report, 600, "risky.sentiment")
@@ -42,6 +44,7 @@ def create_risky_debator(llm):
         logger.info(f"📊 [Risky Analyst] 输入数据长度统计:")
         logger.info(f"  - market_report: {len(market_research_report):,} 字符")
         logger.info(f"  - a_share_sentiment_report: {len(a_share_sentiment_report):,} 字符")
+        logger.info(f"  - fund_flow_report: {len(fund_flow_report):,} 字符")
         logger.info(f"  - theme_rotation_report: {len(theme_rotation_report):,} 字符")
         logger.info(f"  - institutional_theme_report: {len(institutional_theme_report):,} 字符")
         logger.info(f"  - sentiment_report: {len(sentiment_report):,} 字符")
@@ -49,7 +52,7 @@ def create_risky_debator(llm):
         logger.info(f"  - fundamentals_report: {len(fundamentals_report):,} 字符")
         logger.info(f"  - trader_decision: {len(trader_decision):,} 字符")
         logger.info(f"  - history: {len(history):,} 字符")
-        total_length = (len(market_research_report) + len(a_share_sentiment_report) + len(theme_rotation_report) + len(institutional_theme_report) + len(sentiment_report) +
+        total_length = (len(market_research_report) + len(a_share_sentiment_report) + len(fund_flow_report) + len(theme_rotation_report) + len(institutional_theme_report) + len(sentiment_report) +
                        len(news_report) + len(fundamentals_report) +
                        len(trader_decision) + len(history) +
                        len(current_safe_response) + len(current_neutral_response))
@@ -63,6 +66,7 @@ def create_risky_debator(llm):
 
 市场研究报告：{market_research_report}
 A股盘面情绪报告：{a_share_sentiment_report}
+A股资金面报告：{fund_flow_report}
 A股题材轮动报告：{theme_rotation_report}
 机构布局题材报告：{institutional_theme_report}
 社交媒体情绪报告：{sentiment_report}
@@ -70,13 +74,19 @@ A股题材轮动报告：{theme_rotation_report}
 公司基本面报告：{fundamentals_report}
 以下是当前对话历史：{history} 以下是保守分析师的最后论点：{current_safe_response} 以下是中性分析师的最后论点：{current_neutral_response}。如果其他观点没有回应，请不要虚构，只需提出您的观点。
 
-积极参与，解决提出的任何具体担忧，反驳他们逻辑中的弱点，并断言承担风险的好处以超越市场常规。专注于辩论和说服，而不仅仅是呈现数据。挑战每个反驳点，强调为什么高风险方法是最优的。请用中文以对话方式输出，就像您在说话一样，不使用任何特殊格式。"""
+积极参与，解决提出的任何具体担忧，反驳他们逻辑中的弱点，并断言承担风险的好处以超越市场常规。专注于辩论和说服，而不仅仅是呈现数据。挑战每个反驳点，强调为什么高风险方法是最优的。
+
+输出要求：
+- 只写最重要的 3 条进攻性观点
+- 直接反驳，不要大段铺垫
+- 总长度控制在 600 字以内
+- 请用中文输出"""
 
         logger.info(f"⏱️ [Risky Analyst] 开始调用LLM...")
         import time
         llm_start_time = time.time()
 
-        response = llm.invoke(prompt)
+        response = llm.bind(max_tokens=800).invoke(prompt)
 
         llm_elapsed = time.time() - llm_start_time
         logger.info(f"⏱️ [Risky Analyst] LLM调用完成，耗时: {llm_elapsed:.2f}秒")

@@ -131,6 +131,7 @@ def render_analysis_info(results):
             analyst_names = {
                 'market': '📈 市场技术分析师',
                 'emotion': '🔥 A股情绪分析师',
+                'fund_flow': '💸 资金面分析师',
                 'theme_rotation': '🧭 题材轮动分析师',
                 'institutional_theme': '🏦 机构布局题材分析师',
                 'fundamentals': '💰 基本面分析师',
@@ -377,6 +378,12 @@ def render_detailed_analysis(state):
             'title': '💰 基本面分析',
             'icon': '💰',
             'description': '财务数据、估值水平、盈利能力分析'
+        },
+        {
+            'key': 'fund_flow_report',
+            'title': '💸 A股资金面',
+            'icon': '💸',
+            'description': '龙虎榜、机构/游资风格、北向和融资融券等资金线索分析'
         },
         {
             'key': 'sentiment_report',

@@ -749,6 +749,7 @@ const formatAnalysts = (analysts: string[]) => {
     'fundamentals': '基本面分析师',
     'news': '新闻分析师',
     'social': '社媒分析师',
+    'fund_flow': '资金面分析师',
     'theme_rotation': '题材轮动分析师',
     'institutional_theme': '机构布局题材分析师',
     'sentiment': '情绪分析师',
@@ -811,6 +812,7 @@ const getModuleDisplayName = (moduleName: string) => {
     // 分析师团队
     market_report: '📈 市场技术分析',
     a_share_sentiment_report: '🔥 A股盘面情绪',
+    fund_flow_report: '💸 A股资金面',
     theme_rotation_report: '🧭 A股题材轮动',
     institutional_theme_report: '🏦 机构布局题材',
     sentiment_report: '💬 公共舆情分析',

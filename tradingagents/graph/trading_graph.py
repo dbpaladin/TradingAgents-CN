@@ -213,7 +213,7 @@ class TradingAgentsGraph:
         expanded_analysts = []
         for analyst in selected_analysts:
             if analyst == "sentiment":
-                expanded_analysts.extend(["social", "emotion", "theme_rotation"])
+                expanded_analysts.extend(["social", "emotion", "fund_flow", "theme_rotation"])
             else:
                 expanded_analysts.append(analyst)
 
@@ -870,6 +870,11 @@ class TradingAgentsGraph:
                     self.toolkit.get_a_share_market_sentiment,
                 ]
             ),
+            "fund_flow": ToolNode(
+                [
+                    self.toolkit.get_a_share_fund_flow,
+                ]
+            ),
             "theme_rotation": ToolNode(
                 [
                     self.toolkit.get_a_share_theme_rotation,
@@ -1101,6 +1106,7 @@ class TradingAgentsGraph:
                 # 分析师节点
                 'Market Analyst': "📊 市场分析师",
                 'Emotion Analyst': "🔥 A股情绪分析师",
+                'Fund_flow Analyst': "💸 资金面分析师",
                 'Theme_rotation Analyst': "🧭 题材轮动分析师",
                 'Institutional_theme Analyst': "🏦 机构布局题材分析师",
                 'Fundamentals Analyst': "💼 基本面分析师",
@@ -1109,6 +1115,7 @@ class TradingAgentsGraph:
                 # 工具节点（不发送进度更新，避免重复）
                 'tools_market': None,
                 'tools_emotion': None,
+                'tools_fund_flow': None,
                 'tools_fundamentals': None,
                 'tools_news': None,
                 'tools_social': None,
@@ -1117,6 +1124,7 @@ class TradingAgentsGraph:
                 # 消息清理节点（不发送进度更新）
                 'Msg Clear Market': None,
                 'Msg Clear Emotion': None,
+                'Msg Clear Fund_flow': None,
                 'Msg Clear Fundamentals': None,
                 'Msg Clear News': None,
                 'Msg Clear Social': None,
@@ -1353,6 +1361,7 @@ class TradingAgentsGraph:
             "trade_date": final_state["trade_date"],
             "market_report": final_state["market_report"],
             "a_share_sentiment_report": final_state.get("a_share_sentiment_report", ""),
+            "fund_flow_report": final_state.get("fund_flow_report", ""),
             "theme_rotation_report": final_state.get("theme_rotation_report", ""),
             "institutional_theme_report": final_state.get("institutional_theme_report", ""),
             "sentiment_report": final_state["sentiment_report"],

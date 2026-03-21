@@ -12,6 +12,7 @@ def create_research_manager(llm, memory):
         history = state["investment_debate_state"].get("history", "")
         market_research_report = state["market_report"]
         a_share_sentiment_report = state.get("a_share_sentiment_report", "")
+        fund_flow_report = state.get("fund_flow_report", "")
         theme_rotation_report = state.get("theme_rotation_report", "")
         institutional_theme_report = state.get("institutional_theme_report", "")
         sentiment_report = state["sentiment_report"]
@@ -22,6 +23,7 @@ def create_research_manager(llm, memory):
 
         market_research_report = compact_text(market_research_report, 1800, "research_manager.market_report")
         a_share_sentiment_report = compact_text(a_share_sentiment_report, 1200, "research_manager.a_share_sentiment")
+        fund_flow_report = compact_text(fund_flow_report, 1200, "research_manager.fund_flow")
         theme_rotation_report = compact_text(theme_rotation_report, 1200, "research_manager.theme_rotation")
         institutional_theme_report = compact_text(institutional_theme_report, 1200, "research_manager.institutional_theme")
         sentiment_report = compact_text(sentiment_report, 800, "research_manager.sentiment")
@@ -29,7 +31,7 @@ def create_research_manager(llm, memory):
         fundamentals_report = compact_text(fundamentals_report, 1400, "research_manager.fundamentals")
         history = compact_history(history, 1400, "research_manager.history")
 
-        curr_situation = f"{market_research_report}\n\n{a_share_sentiment_report}\n\n{theme_rotation_report}\n\n{institutional_theme_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
+        curr_situation = f"{market_research_report}\n\n{a_share_sentiment_report}\n\n{fund_flow_report}\n\n{theme_rotation_report}\n\n{institutional_theme_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
 
         # 安全检查：确保memory不为None
         if memory is not None:
@@ -68,6 +70,8 @@ def create_research_manager(llm, memory):
 
 A股盘面情绪：{a_share_sentiment_report}
 
+A股资金面：{fund_flow_report}
+
 A股题材轮动：{theme_rotation_report}
 
 机构布局题材：{institutional_theme_report}
@@ -81,6 +85,13 @@ A股题材轮动：{theme_rotation_report}
 以下是辩论：
 辩论历史：
 {history}
+
+输出要求：
+- 先给明确建议：买入/卖出/持有
+- 然后用 3-5 条最关键理由说明
+- 目标价只保留核心区间和一个基准目标价
+- 避免重复转述辩论内容
+- 总长度控制在 900 字以内
 
 请用中文撰写所有分析内容和建议。"""
 
@@ -96,7 +107,7 @@ A股题材轮动：{theme_rotation_report}
         # ⏱️ 记录开始时间
         start_time = time.time()
 
-        response = llm.invoke(prompt)
+        response = llm.bind(max_tokens=1100).invoke(prompt)
 
         # ⏱️ 记录结束时间
         elapsed_time = time.time() - start_time

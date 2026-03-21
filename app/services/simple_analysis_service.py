@@ -1312,6 +1312,12 @@ class SimpleAnalysisService:
                             progress_tracker.update_progress("📊 市场分析师正在分析")
                         elif analyst == "emotion":
                             progress_tracker.update_progress("🔥 A股情绪分析师正在分析")
+                        elif analyst == "fund_flow":
+                            progress_tracker.update_progress("💸 资金面分析师正在分析")
+                        elif analyst == "theme_rotation":
+                            progress_tracker.update_progress("🧭 题材轮动分析师正在分析")
+                        elif analyst == "institutional_theme":
+                            progress_tracker.update_progress("🏦 机构布局题材分析师正在分析")
                         elif analyst == "fundamentals":
                             progress_tracker.update_progress("💼 基本面分析师正在分析")
                         elif analyst == "news":
@@ -1532,6 +1538,7 @@ class SimpleAnalysisService:
                 report_fields = [
                     'market_report',
                     'a_share_sentiment_report',
+                    'fund_flow_report',
                     'theme_rotation_report',
                     'institutional_theme_report',
                     'sentiment_report',
@@ -2408,6 +2415,7 @@ class SimpleAnalysisService:
                     report_fields = [
                         'market_report',
                         'a_share_sentiment_report',
+                        'fund_flow_report',
                         'theme_rotation_report',
                         'institutional_theme_report',
                         'sentiment_report',
@@ -2788,6 +2796,11 @@ class SimpleAnalysisService:
                     'filename': 'a_share_sentiment_report.md',
                     'title': f'{stock_symbol} A股盘面情绪分析报告',
                     'state_key': 'a_share_sentiment_report'
+                },
+                'fund_flow_report': {
+                    'filename': 'fund_flow_report.md',
+                    'title': f'{stock_symbol} A股资金面分析报告',
+                    'state_key': 'fund_flow_report'
                 },
                 'theme_rotation_report': {
                     'filename': 'theme_rotation_report.md',

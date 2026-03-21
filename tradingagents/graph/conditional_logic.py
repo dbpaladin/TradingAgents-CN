@@ -129,6 +129,37 @@ class ConditionalLogic:
         logger.info("🔀 [条件判断] ✅ 无tool_calls，返回: Msg Clear Emotion")
         return "Msg Clear Emotion"
 
+    def should_continue_fund_flow(self, state: AgentState):
+        """Determine if fund flow analysis should continue."""
+        from tradingagents.utils.logging_init import get_logger
+        logger = get_logger("agents")
+
+        messages = state["messages"]
+        last_message = messages[-1]
+        tool_call_count = state.get("fund_flow_tool_call_count", 0)
+        max_tool_calls = 3
+        report = state.get("fund_flow_report", "")
+
+        logger.info("🔀 [条件判断] should_continue_fund_flow")
+        logger.info(f"🔀 [条件判断] - 消息数量: {len(messages)}")
+        logger.info(f"🔀 [条件判断] - 报告长度: {len(report)}")
+        logger.info(f"🔧 [死循环修复] - 工具调用次数: {tool_call_count}/{max_tool_calls}")
+
+        if tool_call_count >= max_tool_calls:
+            logger.warning("🔧 [死循环修复] 达到最大工具调用次数，强制结束: Msg Clear Fund_flow")
+            return "Msg Clear Fund_flow"
+
+        if report and len(report) > 100:
+            logger.info("🔀 [条件判断] ✅ 报告已完成，返回: Msg Clear Fund_flow")
+            return "Msg Clear Fund_flow"
+
+        if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+            logger.info("🔀 [条件判断] 🔧 检测到tool_calls，返回: tools_fund_flow")
+            return "tools_fund_flow"
+
+        logger.info("🔀 [条件判断] ✅ 无tool_calls，返回: Msg Clear Fund_flow")
+        return "Msg Clear Fund_flow"
+
     def should_continue_theme_rotation(self, state: AgentState):
         """Determine if theme rotation analysis should continue."""
         from tradingagents.utils.logging_init import get_logger

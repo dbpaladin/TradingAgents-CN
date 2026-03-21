@@ -808,7 +808,7 @@ def validate_analysis_params(stock_symbol, analysis_date, analysts, research_dep
     if not analysts or len(analysts) == 0:
         errors.append("必须至少选择一个分析师")
     
-    valid_analysts = ['market', 'emotion', 'social', 'news', 'fundamentals', 'sentiment']
+    valid_analysts = ['market', 'emotion', 'fund_flow', 'theme_rotation', 'institutional_theme', 'social', 'news', 'fundamentals', 'sentiment']
     invalid_analysts = [a for a in analysts if a not in valid_analysts]
     if invalid_analysts:
         errors.append(f"无效的分析师类型: {', '.join(invalid_analysts)}")

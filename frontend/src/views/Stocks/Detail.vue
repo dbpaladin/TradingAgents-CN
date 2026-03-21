@@ -1084,6 +1084,7 @@ function formatReportName(key: string): string {
     // 分析师团队
     'market_report': '📈 市场技术分析',
     'a_share_sentiment_report': '🔥 A股盘面情绪',
+    'fund_flow_report': '💸 A股资金面',
     'theme_rotation_report': '🧭 A股题材轮动',
     'institutional_theme_report': '🏦 机构布局题材',
     'sentiment_report': '💬 公共舆情分析',

@@ -407,6 +407,7 @@ async def get_task_result(
                     report_fields = [
                         'market_report',
                         'a_share_sentiment_report',
+                        'fund_flow_report',
                         'theme_rotation_report',
                         'institutional_theme_report',
                         'sentiment_report',
@@ -524,7 +525,7 @@ async def get_task_result(
             # summary 从若干报告拼接生成
             if not result_data.get('summary'):
                 sum_candidates = []
-                for k in ['market_report', 'a_share_sentiment_report', 'theme_rotation_report', 'institutional_theme_report', 'fundamentals_report', 'sentiment_report', 'news_report']:
+                for k in ['market_report', 'a_share_sentiment_report', 'fund_flow_report', 'theme_rotation_report', 'institutional_theme_report', 'fundamentals_report', 'sentiment_report', 'news_report']:
                     v = reports.get(k)
                     if isinstance(v, str) and len(v.strip()) > 50:
                         sum_candidates.append(v.strip())

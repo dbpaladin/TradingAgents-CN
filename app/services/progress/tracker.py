@@ -186,6 +186,7 @@ class RedisProgressTracker:
         mapping = {
             'market': {"name": "📊 市场分析师", "description": "分析股价走势、成交量、技术指标等市场表现"},
             'emotion': {"name": "🔥 A股情绪分析师", "description": "分析涨停梯队、炸板率、连板高度、情绪周期等盘面信号"},
+            'fund_flow': {"name": "💸 资金面分析师", "description": "分析龙虎榜、机构/游资风格、北向和融资融券等资金线索"},
             'theme_rotation': {"name": "🧭 题材轮动分析师", "description": "分析主线题材、板块轮动、龙头梯队和目标股题材定位"},
             'institutional_theme': {"name": "🏦 机构布局题材分析师", "description": "识别机构酝酿/试盘的候选题材与提前布局机会"},
             'fundamentals': {"name": "💼 基本面分析师", "description": "分析公司财务状况、盈利能力、成长性等基本面"},

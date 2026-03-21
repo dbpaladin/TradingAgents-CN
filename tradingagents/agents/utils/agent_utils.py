@@ -1337,6 +1337,56 @@ class Toolkit:
 
     @staticmethod
     @tool
+    @log_tool_call(tool_name="get_a_share_fund_flow", log_args=True)
+    def get_a_share_fund_flow(
+        ticker: Annotated[str, "A股股票代码，如 000001 或 600519.SH"],
+        curr_date: Annotated[str, "当前日期，格式：YYYY-MM-DD"]
+    ) -> str:
+        """
+        获取 A 股资金面分析报告。
+        重点关注龙虎榜、机构/游资风格、北向资金和融资融券等资金线索。
+        """
+        try:
+            from tradingagents.utils.stock_utils import StockUtils
+            from tradingagents.tools.analysis.a_share_fund_flow import (
+                build_a_share_fund_flow_report,
+                get_cached_a_share_fund_flow_report,
+            )
+
+            market_info = StockUtils.get_market_info(ticker)
+            if not market_info["is_china"]:
+                return f"# {ticker} A股资金面分析\n\n当前标的为 {market_info['market_name']}，该工具仅支持中国A股。"
+
+            cached = get_cached_a_share_fund_flow_report(ticker=ticker, trade_date=curr_date)
+            if cached:
+                logger.info(f"✅ [A股资金面工具] 命中缓存: {ticker} {curr_date}")
+                return cached
+
+            timeout_seconds = int(os.getenv("A_SHARE_FUND_FLOW_TIMEOUT_SECONDS", "25"))
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            try:
+                future = executor.submit(build_a_share_fund_flow_report, ticker, curr_date)
+                try:
+                    return future.result(timeout=timeout_seconds)
+                except concurrent.futures.TimeoutError:
+                    logger.warning(f"⚠️ [A股资金面工具] 构建超时({timeout_seconds}s): {ticker} {curr_date}")
+                    future.cancel()
+                    cached = get_cached_a_share_fund_flow_report(ticker=ticker, trade_date=curr_date)
+                    if cached:
+                        return cached + "\n\n> 注: 本次请求超时，已返回最近一次缓存结果。"
+                    return (
+                        f"# {ticker} A股资金面分析\n\n"
+                        f"当前资金面分析构建超时（>{timeout_seconds}秒），"
+                        "已跳过详细资金面报告以避免拖慢整条分析链路。"
+                    )
+            finally:
+                executor.shutdown(wait=False, cancel_futures=True)
+        except Exception as e:
+            logger.error(f"❌ [A股资金面工具] 执行失败: {e}")
+            return f"# {ticker} A股资金面分析\n\n获取失败: {e}"
+
+    @staticmethod
+    @tool
     @log_tool_call(tool_name="get_a_share_theme_rotation", log_args=True)
     def get_a_share_theme_rotation(
         ticker: Annotated[str, "A股股票代码，如 000001 或 600519.SH"],

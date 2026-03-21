@@ -19,6 +19,7 @@ def create_bull_researcher(llm, memory):
         current_response = investment_debate_state.get("current_response", "")
         market_research_report = state["market_report"]
         a_share_sentiment_report = state.get("a_share_sentiment_report", "")
+        fund_flow_report = state.get("fund_flow_report", "")
         theme_rotation_report = state.get("theme_rotation_report", "")
         institutional_theme_report = state.get("institutional_theme_report", "")
         sentiment_report = state["sentiment_report"]
@@ -82,6 +83,7 @@ def create_bull_researcher(llm, memory):
         logger.debug(f"🐂 [DEBUG] 接收到的报告:")
         logger.debug(f"🐂 [DEBUG] - 市场报告长度: {len(market_research_report)}")
         logger.debug(f"🐂 [DEBUG] - A股情绪报告长度: {len(a_share_sentiment_report)}")
+        logger.debug(f"🐂 [DEBUG] - 资金面报告长度: {len(fund_flow_report)}")
         logger.debug(f"🐂 [DEBUG] - 题材轮动报告长度: {len(theme_rotation_report)}")
         logger.debug(f"🐂 [DEBUG] - 机构题材报告长度: {len(institutional_theme_report)}")
         logger.debug(f"🐂 [DEBUG] - 情绪报告长度: {len(sentiment_report)}")
@@ -93,6 +95,7 @@ def create_bull_researcher(llm, memory):
 
         market_research_report = compact_text(market_research_report, 1800, "bull.market_report")
         a_share_sentiment_report = compact_text(a_share_sentiment_report, 1200, "bull.a_share_sentiment")
+        fund_flow_report = compact_text(fund_flow_report, 1200, "bull.fund_flow")
         theme_rotation_report = compact_text(theme_rotation_report, 1200, "bull.theme_rotation")
         institutional_theme_report = compact_text(institutional_theme_report, 1200, "bull.institutional_theme")
         sentiment_report = compact_text(sentiment_report, 800, "bull.sentiment")
@@ -101,7 +104,7 @@ def create_bull_researcher(llm, memory):
         history = compact_history(history, 1200, "bull.history")
         current_response = compact_text(current_response, 800, "bull.current_response")
 
-        curr_situation = f"{market_research_report}\n\n{a_share_sentiment_report}\n\n{theme_rotation_report}\n\n{institutional_theme_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
+        curr_situation = f"{market_research_report}\n\n{a_share_sentiment_report}\n\n{fund_flow_report}\n\n{theme_rotation_report}\n\n{institutional_theme_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
 
         # 安全检查：确保memory不为None
         if memory is not None:
@@ -129,6 +132,7 @@ def create_bull_researcher(llm, memory):
 可用资源：
 市场研究报告：{market_research_report}
 A股盘面情绪报告：{a_share_sentiment_report}
+A股资金面报告：{fund_flow_report}
 A股题材轮动报告：{theme_rotation_report}
 机构布局题材报告：{institutional_theme_report}
 社交媒体情绪报告：{sentiment_report}
@@ -140,10 +144,16 @@ A股题材轮动报告：{theme_rotation_report}
 
 请使用这些信息提供令人信服的看涨论点，反驳看跌担忧，并参与动态辩论，展示看涨立场的优势。你还必须处理反思并从过去的经验教训和错误中学习。
 
+输出要求：
+- 只保留最关键的 3-4 个论点
+- 优先写结论、证据、对空头最直接的反驳
+- 不要长篇铺陈，不要重复背景
+- 总长度控制在 700 字以内
+
 请确保所有回答都使用中文。
 """
 
-        response = llm.invoke(prompt)
+        response = llm.bind(max_tokens=900).invoke(prompt)
 
         argument = f"Bull Analyst: {response.content}"
 

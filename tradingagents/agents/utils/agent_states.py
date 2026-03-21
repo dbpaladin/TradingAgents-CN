@@ -60,6 +60,7 @@ class AgentState(MessagesState):
     # research step
     market_report: Annotated[str, "Report from the Market Analyst"]
     a_share_sentiment_report: Annotated[str, "Report from the A-share Sentiment Analyst"]
+    fund_flow_report: Annotated[str, "Report from the Fund Flow Analyst"]
     theme_rotation_report: Annotated[str, "Report from the Theme Rotation Analyst"]
     institutional_theme_report: Annotated[str, "Report from the Institutional Theme Analyst"]
     sentiment_report: Annotated[str, "Report from the Social Media Analyst"]
@@ -72,6 +73,7 @@ class AgentState(MessagesState):
     market_tool_call_count: Annotated[int, "Market analyst tool call counter"]
     news_tool_call_count: Annotated[int, "News analyst tool call counter"]
     a_share_sentiment_tool_call_count: Annotated[int, "A-share sentiment analyst tool call counter"]
+    fund_flow_tool_call_count: Annotated[int, "Fund flow analyst tool call counter"]
     theme_rotation_tool_call_count: Annotated[int, "Theme rotation analyst tool call counter"]
     institutional_theme_tool_call_count: Annotated[int, "Institutional theme analyst tool call counter"]
     sentiment_tool_call_count: Annotated[int, "Social media analyst tool call counter"]

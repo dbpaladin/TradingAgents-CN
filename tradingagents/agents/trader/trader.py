@@ -14,6 +14,7 @@ def create_trader(llm, memory):
         investment_plan = state["investment_plan"]
         market_research_report = state["market_report"]
         a_share_sentiment_report = state.get("a_share_sentiment_report", "")
+        fund_flow_report = state.get("fund_flow_report", "")
         theme_rotation_report = state.get("theme_rotation_report", "")
         institutional_theme_report = state.get("institutional_theme_report", "")
         sentiment_report = state["sentiment_report"]
@@ -41,13 +42,14 @@ def create_trader(llm, memory):
         investment_plan = compact_text(investment_plan, 1400, "trader.investment_plan")
         market_research_report = compact_text(market_research_report, 1600, "trader.market_report")
         a_share_sentiment_report = compact_text(a_share_sentiment_report, 1000, "trader.a_share_sentiment")
+        fund_flow_report = compact_text(fund_flow_report, 1000, "trader.fund_flow")
         theme_rotation_report = compact_text(theme_rotation_report, 1000, "trader.theme_rotation")
         institutional_theme_report = compact_text(institutional_theme_report, 1000, "trader.institutional_theme")
         sentiment_report = compact_text(sentiment_report, 700, "trader.sentiment")
         news_report = compact_text(news_report, 900, "trader.news")
         fundamentals_report = compact_text(fundamentals_report, 1200, "trader.fundamentals")
 
-        curr_situation = f"{market_research_report}\n\n{a_share_sentiment_report}\n\n{theme_rotation_report}\n\n{institutional_theme_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
+        curr_situation = f"{market_research_report}\n\n{a_share_sentiment_report}\n\n{fund_flow_report}\n\n{theme_rotation_report}\n\n{institutional_theme_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
 
         # 检查memory是否可用
         if memory is not None:
@@ -90,6 +92,7 @@ def create_trader(llm, memory):
 🎯 目标价位计算指导：
 - 基于基本面分析中的估值数据（P/E、P/B、DCF等）
 - 参考技术分析的支撑位和阻力位
+- 对A股标的，必须结合资金面报告判断是游资接力、机构吸筹还是资金分歧
 - 对A股标的，必须结合题材轮动报告判断该股是主线核心、跟风补涨还是独立逻辑
 - 对A股标的，还必须结合机构布局题材报告判断该股是否适合“提前布局”而不是只做热点跟随
 - 考虑行业平均估值水平
@@ -105,6 +108,12 @@ def create_trader(llm, memory):
 
 请用中文撰写分析内容，并始终以'最终交易建议: **买入/持有/卖出**'结束您的回应以确认您的建议。
 
+输出要求：
+- 尽量简洁，优先给结论和执行参数
+- 总长度控制在 700 字以内
+- 不要重复大段背景资料
+- 重点保留：建议、目标价、止损/风控、核心理由
+
 请不要忘记利用过去决策的经验教训来避免重复错误。以下是类似情况下的交易反思和经验教训: {past_memory_str}""",
             },
             context,
@@ -113,7 +122,7 @@ def create_trader(llm, memory):
         logger.debug(f"💰 [DEBUG] 准备调用LLM，系统提示包含货币: {currency}")
         logger.debug(f"💰 [DEBUG] 系统提示中的关键部分: 目标价格({currency})")
 
-        result = llm.invoke(messages)
+        result = llm.bind(max_tokens=900).invoke(messages)
 
         logger.debug(f"💰 [DEBUG] LLM调用完成")
         logger.debug(f"💰 [DEBUG] 交易员回复长度: {len(result.content)}")

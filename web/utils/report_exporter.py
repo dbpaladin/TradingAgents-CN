@@ -683,6 +683,11 @@ def save_modular_reports_to_results_dir(results: Dict[str, Any], stock_symbol: s
                 'title': f'{stock_symbol} A股盘面情绪分析报告',
                 'state_key': 'a_share_sentiment_report'
             },
+            'fund_flow_report': {
+                'filename': 'fund_flow_report.md',
+                'title': f'{stock_symbol} A股资金面分析报告',
+                'state_key': 'fund_flow_report'
+            },
             'sentiment_report': {
                 'filename': 'sentiment_report.md',
                 'title': f'{stock_symbol} 公共舆情分析报告',

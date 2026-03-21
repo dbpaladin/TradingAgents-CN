@@ -36,6 +36,12 @@ export const ANALYSTS: Analyst[] = [
     icon: 'Lightning'
   },
   {
+    id: 'fund_flow',
+    name: '资金面分析师',
+    description: '分析龙虎榜、机构/游资风格、北向和融资融券等资金线索',
+    icon: 'Coin'
+  },
+  {
     id: 'theme_rotation',
     name: '题材轮动分析师',
     description: '分析主线题材、板块轮动、龙头梯队和个股题材定位',
@@ -82,6 +88,7 @@ export const ANALYST_NAME_TO_ID_MAP: Record<string, string> = {
   '基本面分析师': 'fundamentals',
   '新闻分析师': 'news',
   'A股情绪分析师': 'emotion',
+  '资金面分析师': 'fund_flow',
   '题材轮动分析师': 'theme_rotation',
   '机构布局题材分析师': 'institutional_theme',
   '社媒分析师': 'social'

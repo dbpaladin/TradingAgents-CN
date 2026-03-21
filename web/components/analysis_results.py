@@ -1129,6 +1129,7 @@ def render_results_comparison(results: List[Dict[str, Any]]):
         ('market_report', '📈 市场技术分析'),
         ('fundamentals_report', '💰 基本面分析'),
         ('a_share_sentiment_report', '🔥 A股盘面情绪'),
+        ('fund_flow_report', '💸 A股资金面'),
         ('sentiment_report', '💬 公共舆情分析'),
         ('news_report', '📰 新闻事件分析'),
         ('risk_assessment', '⚠️ 风险评估'),
@@ -1263,6 +1264,7 @@ def render_detailed_analysis_content(selected_result):
         report_display_names = {
             'final_trade_decision': '🎯 最终交易决策',
             'fundamentals_report': '💰 基本面分析',
+            'fund_flow_report': '💸 A股资金面',
             'technical_report': '📈 技术面分析',
             'market_sentiment_report': '💭 市场情绪分析',
             'risk_assessment_report': '⚠️ 风险评估',
@@ -1381,6 +1383,12 @@ def render_detailed_analysis_content(selected_result):
             'title': '🔥 A股盘面情绪',
             'icon': '🔥',
             'description': '涨停梯队、炸板率、连板高度与情绪周期分析'
+        },
+        {
+            'key': 'fund_flow_report',
+            'title': '💸 A股资金面',
+            'icon': '💸',
+            'description': '龙虎榜、机构/游资风格、北向和融资融券等资金线索分析'
         },
         {
             'key': 'sentiment_report',
@@ -1723,6 +1731,7 @@ def show_expanded_detail(result):
                         ('market_report', '📈 市场分析'),
                         ('fundamentals_report', '💰 基本面分析'),
                         ('a_share_sentiment_report', '🔥 A股盘面情绪'),
+                        ('fund_flow_report', '💸 A股资金面'),
                         ('sentiment_report', '💬 公共舆情分析'),
                         ('news_report', '📰 新闻分析'),
                         ('risk_assessment', '⚠️ 风险评估'),
@@ -1766,6 +1775,7 @@ def show_expanded_detail(result):
         report_display_names = {
             'final_trade_decision': '🎯 最终交易决策',
             'fundamentals_report': '💰 基本面分析',
+            'fund_flow_report': '💸 A股资金面',
             'technical_report': '📈 技术面分析',
             'market_sentiment_report': '💭 市场情绪分析',
             'risk_assessment_report': '⚠️ 风险评估',
@@ -1774,6 +1784,8 @@ def show_expanded_detail(result):
             'news_analysis_report': '📰 新闻分析',
             'news_report': '📰 新闻分析',
             'market_report': '📈 市场分析',
+            'a_share_sentiment_report': '🔥 A股盘面情绪',
+            'fund_flow_report': '💸 A股资金面',
             'social_media_report': '📱 社交媒体分析',
             'bull_state': '🐂 多头观点',
             'bear_state': '🐻 空头观点',
