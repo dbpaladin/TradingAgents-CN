@@ -426,6 +426,52 @@ class TestBacktestDecisionInterval:
         assert result.trades[2].ai_reason.startswith("[复用前次信号]")
 
 
+class TestBacktestAutoOptimization:
+    def test_auto_optimize_promotes_heavy_backtest_to_fast_interval(self):
+        from app.services.backtest_service import BacktestService
+
+        service = BacktestService()
+        config = BacktestConfig(
+            symbol="601669",
+            start_date="2026-01-01",
+            end_date="2026-03-21",
+            selected_analysts=[
+                "market",
+                "fundamentals",
+                "sentiment",
+                "fund_flow",
+                "news",
+                "institutional_theme",
+                "theme_rotation",
+            ],
+            research_depth="快速",
+            decision_interval_days=1,
+        )
+
+        note = service._auto_optimize_backtest_config(config)
+
+        assert note is not None
+        assert config.decision_interval_days == 5
+
+    def test_auto_optimize_keeps_explicit_fast_mode_choice(self):
+        from app.services.backtest_service import BacktestService
+
+        service = BacktestService()
+        config = BacktestConfig(
+            symbol="601669",
+            start_date="2026-01-01",
+            end_date="2026-03-21",
+            selected_analysts=["market", "fundamentals", "news"],
+            research_depth="快速",
+            decision_interval_days=3,
+        )
+
+        note = service._auto_optimize_backtest_config(config)
+
+        assert note is None
+        assert config.decision_interval_days == 3
+
+
 # ===== 测试：绩效指标计算 =====
 
 class TestCalculateMetrics:

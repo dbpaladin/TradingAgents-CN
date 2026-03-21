@@ -24,16 +24,16 @@ def create_risk_manager(llm, memory):
         sentiment_report = state["sentiment_report"]
         trader_plan = state["investment_plan"]
 
-        market_research_report = compact_text(market_research_report, 1600, "risk_manager.market_report")
-        a_share_sentiment_report = compact_text(a_share_sentiment_report, 1000, "risk_manager.a_share_sentiment")
-        fund_flow_report = compact_text(fund_flow_report, 1000, "risk_manager.fund_flow")
-        theme_rotation_report = compact_text(theme_rotation_report, 1000, "risk_manager.theme_rotation")
-        institutional_theme_report = compact_text(institutional_theme_report, 1000, "risk_manager.institutional_theme")
-        sentiment_report = compact_text(sentiment_report, 700, "risk_manager.sentiment")
-        news_report = compact_text(news_report, 900, "risk_manager.news")
-        fundamentals_report = compact_text(fundamentals_report, 1200, "risk_manager.fundamentals")
-        trader_plan = compact_text(trader_plan, 1200, "risk_manager.trader_plan")
-        history = compact_history(history, 1400, "risk_manager.history")
+        market_research_report = compact_text(market_research_report, 1200, "risk_manager.market_report")
+        a_share_sentiment_report = compact_text(a_share_sentiment_report, 700, "risk_manager.a_share_sentiment")
+        fund_flow_report = compact_text(fund_flow_report, 700, "risk_manager.fund_flow")
+        theme_rotation_report = compact_text(theme_rotation_report, 800, "risk_manager.theme_rotation")
+        institutional_theme_report = compact_text(institutional_theme_report, 800, "risk_manager.institutional_theme")
+        sentiment_report = compact_text(sentiment_report, 400, "risk_manager.sentiment")
+        news_report = compact_text(news_report, 500, "risk_manager.news")
+        fundamentals_report = compact_text(fundamentals_report, 900, "risk_manager.fundamentals")
+        trader_plan = compact_text(trader_plan, 700, "risk_manager.trader_plan")
+        history = compact_history(history, 800, "risk_manager.history")
 
         curr_situation = f"{market_research_report}\n\n{a_share_sentiment_report}\n\n{fund_flow_report}\n\n{theme_rotation_report}\n\n{institutional_theme_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
 
@@ -51,7 +51,7 @@ def create_risk_manager(llm, memory):
 
 你的目标：
 1. 明确给出最终建议：买入、卖出或持有。
-2. 提炼最关键的风险与修正意见，不要复述整段辩论。
+2. 只提炼最关键的风险与修正意见，不要复述整段辩论。
 3. 如果是A股，必须结合题材轮动和机构布局题材判断交易逻辑是否成立。
 4. 参考过去经验教训，避免重复误判。
 
@@ -74,9 +74,9 @@ A股题材轮动：{theme_rotation_report}
 
 输出要求：
 - 第一行先写“最终建议：买入/卖出/持有”
-- 再写 3-5 条最关键的风险与修正意见
+- 再写不超过 3 条最关键的风险与修正意见
 - 必须给出一个核心目标价和一个核心止损/风控位
-- 总长度控制在 900 字以内
+- 总长度控制在 500 字以内
 - 全部使用中文
 """
 
@@ -104,7 +104,7 @@ A股题材轮动：{theme_rotation_report}
                 # ⏱️ 记录开始时间
                 start_time = time.time()
 
-                response = llm.bind(max_tokens=1100).invoke(prompt)
+                response = llm.bind(max_tokens=650, temperature=0.2).invoke(prompt)
 
                 # ⏱️ 记录结束时间
                 elapsed_time = time.time() - start_time

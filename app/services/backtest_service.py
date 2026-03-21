@@ -944,9 +944,60 @@ class BacktestEngine:
 class BacktestService:
     """回测服务：管理回测任务的创建、执行、查询"""
 
+    def _estimate_trading_days_fast(self, start_date: str, end_date: str) -> int:
+        """粗略估算交易日数量，用于创建任务时的自动降载决策"""
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d").date()
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d").date()
+        trading_days = 0
+        cur = start_dt
+        while cur <= end_dt:
+            if cur.weekday() < 5:
+                trading_days += 1
+            cur += timedelta(days=1)
+        return trading_days
+
+    def _estimate_analyst_weight(self, analysts: List[str]) -> int:
+        """估算分析师负载权重，覆盖 sentiment 在图中的额外展开成本"""
+        unique_analysts = set(analysts or [])
+        weight = len(unique_analysts)
+        if "sentiment" in unique_analysts:
+            # sentiment 会在图中额外扩展为 social + emotion
+            weight += 2
+        return max(1, weight)
+
+    def _auto_optimize_backtest_config(self, config: BacktestConfig) -> Optional[str]:
+        """
+        对明显过重的回测自动开启加速/极速模式。
+        仅在用户仍使用逐日重算时介入，避免覆盖用户已经做出的明确选择。
+        """
+        if (config.decision_interval_days or 1) > 1:
+            return None
+
+        estimated_days = self._estimate_trading_days_fast(config.start_date, config.end_date)
+        analyst_weight = self._estimate_analyst_weight(config.selected_analysts)
+        workload_score = estimated_days * analyst_weight
+
+        optimized_interval = 1
+        if workload_score >= 180 or (estimated_days >= 35 and analyst_weight >= 5):
+            optimized_interval = 5
+        elif workload_score >= 90 or (estimated_days >= 20 and analyst_weight >= 4):
+            optimized_interval = 3
+
+        if optimized_interval == 1:
+            return None
+
+        config.decision_interval_days = optimized_interval
+        note = (
+            f"检测到本次回测负载较高，已自动切换为每 {optimized_interval} 个交易日重算一次 AI"
+            f"（估算交易日 {estimated_days}，分析师权重 {analyst_weight}）"
+        )
+        logger.warning("⚡ [回测自动降载] %s | symbol=%s", note, config.symbol)
+        return note
+
     async def create_task(self, user_id: str, config: BacktestConfig) -> Dict[str, Any]:
         """创建并提交回测任务（异步执行）"""
         task_id = str(uuid.uuid4())
+        optimization_note = self._auto_optimize_backtest_config(config)
 
         # 标准化股票名称（尝试从 AkShare 获取）
         if not config.stock_name:
@@ -979,7 +1030,9 @@ class BacktestService:
             "symbol": config.symbol,
             "start_date": config.start_date,
             "end_date": config.end_date,
-            "message": "回测任务已提交，正在后台运行"
+            "decision_interval_days": config.decision_interval_days,
+            "optimization_note": optimization_note,
+            "message": optimization_note or "回测任务已提交，正在后台运行"
         }
 
     async def _run_task_background(self, task: BacktestTask):

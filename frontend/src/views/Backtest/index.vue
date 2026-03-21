@@ -404,7 +404,7 @@ const form = ref({
   position_ratio_pct: 100,            // 百分比（1-100）
   selected_analysts: ['market', 'fundamentals'],
   research_depth: '快速',
-  decision_interval_days: 1,
+  decision_interval_days: 3,
   quick_analysis_model: '',
   deep_analysis_model: '',
   name: ''
@@ -569,7 +569,12 @@ async function submitBacktest() {
     if (!taskId) throw new Error('未获取到任务ID')
 
     currentTaskId.value = taskId
-    ElMessage.success(`回测任务已提交: ${taskId}`)
+    const optimizationNote = res.data?.optimization_note || (res as any).optimization_note
+    if (optimizationNote) {
+      ElMessage.warning(optimizationNote)
+    } else {
+      ElMessage.success(`回测任务已提交: ${taskId}`)
+    }
     startPolling(taskId)
     await loadTaskHistory()
   } catch (e: any) {

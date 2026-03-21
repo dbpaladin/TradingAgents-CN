@@ -5,6 +5,7 @@ from langchain_openai import ChatOpenAI
 # 导入统一日志系统和图处理模块日志装饰器
 from tradingagents.utils.logging_init import get_logger
 from tradingagents.utils.tool_logging import log_graph_module
+from tradingagents.agents.utils.prompt_context import compact_text
 logger = get_logger("graph.signal_processing")
 
 
@@ -41,6 +42,7 @@ class SignalProcessor:
 
         # 清理和验证信号内容
         full_signal = full_signal.strip()
+        full_signal = compact_text(full_signal, 1800, "signal_processing.full_signal")
         if len(full_signal) == 0:
             logger.error(f"❌ [SignalProcessor] 信号内容为空")
             return {
@@ -89,7 +91,12 @@ class SignalProcessor:
 - 股票代码 {stock_symbol or '未知'} 是{market_info['market_name']}，使用{currency}计价
 - 目标价格必须与股票的交易货币一致（{currency_symbol}）
 
-如果某些信息在报告中没有明确提及，请使用合理的默认值。""",
+如果某些信息在报告中没有明确提及，请使用合理的默认值。
+
+输出要求：
+- 只返回JSON，不要附加解释
+- reasoning 控制在 60 字以内
+""",
             ),
             ("human", full_signal),
         ]
@@ -108,7 +115,7 @@ class SignalProcessor:
         logger.debug(f"🔍 [SignalProcessor] 准备调用LLM，消息数量: {len(messages)}, 信号长度: {len(full_signal)}")
 
         try:
-            response = self.quick_thinking_llm.invoke(messages).content
+            response = self.quick_thinking_llm.bind(max_tokens=300, temperature=0).invoke(messages).content
             logger.debug(f"🔍 [SignalProcessor] LLM响应: {response[:200]}...")
 
             # 尝试解析JSON响应

@@ -78,16 +78,16 @@ def create_bear_researcher(llm, memory):
         currency = market_info['currency_name']
         currency_symbol = market_info['currency_symbol']
 
-        market_research_report = compact_text(market_research_report, 1800, "bear.market_report")
-        a_share_sentiment_report = compact_text(a_share_sentiment_report, 1200, "bear.a_share_sentiment")
-        fund_flow_report = compact_text(fund_flow_report, 1200, "bear.fund_flow")
-        theme_rotation_report = compact_text(theme_rotation_report, 1200, "bear.theme_rotation")
-        institutional_theme_report = compact_text(institutional_theme_report, 1200, "bear.institutional_theme")
-        sentiment_report = compact_text(sentiment_report, 800, "bear.sentiment")
-        news_report = compact_text(news_report, 1000, "bear.news")
-        fundamentals_report = compact_text(fundamentals_report, 1400, "bear.fundamentals")
-        history = compact_history(history, 1200, "bear.history")
-        current_response = compact_text(current_response, 800, "bear.current_response")
+        market_research_report = compact_text(market_research_report, 1400, "bear.market_report")
+        a_share_sentiment_report = compact_text(a_share_sentiment_report, 900, "bear.a_share_sentiment")
+        fund_flow_report = compact_text(fund_flow_report, 800, "bear.fund_flow")
+        theme_rotation_report = compact_text(theme_rotation_report, 900, "bear.theme_rotation")
+        institutional_theme_report = compact_text(institutional_theme_report, 900, "bear.institutional_theme")
+        sentiment_report = compact_text(sentiment_report, 500, "bear.sentiment")
+        news_report = compact_text(news_report, 600, "bear.news")
+        fundamentals_report = compact_text(fundamentals_report, 1000, "bear.fundamentals")
+        history = compact_history(history, 700, "bear.history")
+        current_response = compact_text(current_response, 500, "bear.current_response")
 
         curr_situation = f"{market_research_report}\n\n{a_share_sentiment_report}\n\n{fund_flow_report}\n\n{theme_rotation_report}\n\n{institutional_theme_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
 
@@ -105,15 +105,12 @@ def create_bear_researcher(llm, memory):
 ⚠️ 重要提醒：当前分析的是 {market_info['market_name']}，所有价格和估值请使用 {currency}（{currency_symbol}）作为单位。
 ⚠️ 在你的分析中，请始终使用公司名称"{company_name}"而不是股票代码"{ticker}"来称呼这家公司。
 
-你的目标是提出合理的论证，强调风险、挑战和负面指标。利用提供的研究和数据来突出潜在的不利因素并有效反驳看涨论点。
+你的目标是提出合理的论证，强调最关键的风险，并直接反驳看涨论点。
 
-请用中文回答，重点关注以下几个方面：
-
-- 风险和挑战：突出市场饱和、财务不稳定或宏观经济威胁等可能阻碍股票表现的因素
-- 竞争劣势：强调市场地位较弱、创新下降或来自竞争对手威胁等脆弱性
-- 负面指标：使用财务数据、市场趋势或最近不利消息的证据来支持你的立场
-- 反驳看涨观点：用具体数据和合理推理批判性分析看涨论点，揭露弱点或过度乐观的假设
-- 参与讨论：以对话风格呈现你的论点，直接回应看涨分析师的观点并进行有效辩论，而不仅仅是列举事实
+请用中文回答，只聚焦：
+- 最重要的下行风险
+- 为什么它不是当前优先布局标的
+- 对多头最核心论点的直接反驳
 
 可用资源：
 
@@ -132,15 +129,15 @@ A股题材轮动报告：{theme_rotation_report}
 请使用这些信息提供令人信服的看跌论点，反驳看涨声明，并参与动态辩论，展示投资该股票的风险和弱点。你还必须处理反思并从过去的经验教训和错误中学习。
 
 输出要求：
-- 只保留最关键的 3-4 个风险点
-- 优先写结论、证据、对多头最直接的反驳
-- 不要长篇铺陈，不要重复背景
-- 总长度控制在 700 字以内
+- 第一行直接写结论
+- 最多写 3 个风险点
+- 每个风险点尽量一句话说透
+- 总长度控制在 450 字以内
 
 请确保所有回答都使用中文。
 """
 
-        response = llm.bind(max_tokens=900).invoke(prompt)
+        response = llm.bind(max_tokens=550, temperature=0.3).invoke(prompt)
 
         argument = f"Bear Analyst: {response.content}"
 
