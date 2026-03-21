@@ -12,6 +12,7 @@ import asyncio
 import uuid
 import logging
 import math
+import concurrent.futures
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 from pathlib import Path
@@ -65,6 +66,14 @@ class BacktestEngine:
         self.task = task
         self.config = task.config
         self.progress_callback = progress_callback
+        self._executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix=f"backtest-{task.task_id[:8]}"
+        )
+        self._analysis_runtime: Optional[Dict[str, Any]] = None
+        self._reusable_trading_graph = None
+        self._stock_price_cache: Dict[str, float] = {}
+        self._benchmark_price_cache: Dict[str, float] = {}
 
         # 账户状态
         self.cash = self.config.initial_capital
@@ -81,6 +90,10 @@ class BacktestEngine:
         self.peak_assets = self.config.initial_capital
         self.max_drawdown_pct = 0.0
         self.completed_trades: List[Dict] = []  # 已完成的完整买-卖周期
+
+    async def close(self):
+        """释放回测过程中持有的资源"""
+        self._executor.shutdown(wait=False, cancel_futures=False)
 
     async def _update_progress(self, progress: int, current_date: str, message: str):
         """更新进度"""
@@ -207,6 +220,10 @@ class BacktestEngine:
 
     async def _get_stock_price(self, symbol: str, date_str: str) -> Optional[float]:
         """获取股票在指定日期的收盘价 (优先使用 Tushare)"""
+        cached_price = self._stock_price_cache.get(date_str)
+        if cached_price is not None:
+            return cached_price
+
         # 1. 尝试使用 Tushare
         try:
             from tradingagents.dataflows.providers.china.tushare import get_tushare_provider
@@ -214,7 +231,9 @@ class BacktestEngine:
             if ts_provider and ts_provider.is_available():
                 df = await ts_provider.get_historical_data(symbol, start_date=date_str, end_date=date_str)
                 if df is not None and not df.empty:
-                    return float(df.iloc[0]["close"])
+                    price = float(df.iloc[0]["close"])
+                    self._stock_price_cache[date_str] = price
+                    return price
         except Exception as e:
             logger.debug(f"⚠️ Tushare 获取 {symbol} {date_str} 价格失败: {e}")
 
@@ -231,7 +250,9 @@ class BacktestEngine:
                 df["日期"] = pd.to_datetime(df["日期"]).dt.strftime("%Y-%m-%d")
                 row = df[df["日期"] == date_str]
                 if not row.empty:
-                    return float(row.iloc[0]["收盘"])
+                    price = float(row.iloc[0]["收盘"])
+                    self._stock_price_cache[date_str] = price
+                    return price
         except Exception as e:
             logger.warning(f"⚠️ AkShare 获取 {symbol} {date_str} 收盘价失败: {e}")
         return None
@@ -279,6 +300,10 @@ class BacktestEngine:
 
     async def _get_benchmark_price(self, date_str: str) -> Optional[float]:
         """获取基准指数（上证综指）收盘价"""
+        cached_price = self._benchmark_price_cache.get(date_str)
+        if cached_price is not None:
+            return cached_price
+
         try:
             from tradingagents.dataflows.providers.china.tushare import get_tushare_provider
             ts_provider = get_tushare_provider()
@@ -290,7 +315,9 @@ class BacktestEngine:
                     end_date=date_str.replace("-", "")
                 )
                 if df is not None and not df.empty:
-                    return float(df.iloc[0]["close"])
+                    price = float(df.iloc[0]["close"])
+                    self._benchmark_price_cache[date_str] = price
+                    return price
         except Exception as e:
             logger.debug(f"⚠️ Tushare 获取基准 {date_str} 价格失败: {e}")
 
@@ -301,89 +328,229 @@ class BacktestEngine:
             df["date_str"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
             row = df[df["date_str"] == date_str]
             if not row.empty:
-                return float(row.iloc[0]["close"])
+                price = float(row.iloc[0]["close"])
+                self._benchmark_price_cache[date_str] = price
+                return price
         except Exception as e:
             logger.warning(f"⚠️ AkShare 获取基准 {date_str} 价格失败: {e}")
         return None
 
+    async def _prefetch_stock_prices(self, symbol: str, start_date: str, end_date: str) -> Dict[str, float]:
+        """批量预取个股收盘价，避免逐日远程请求"""
+        # 1. 尝试使用 Tushare 一次性获取整段区间
+        try:
+            from tradingagents.dataflows.providers.china.tushare import get_tushare_provider
+            ts_provider = get_tushare_provider()
+            if ts_provider and ts_provider.is_available():
+                df = await ts_provider.get_historical_data(symbol, start_date=start_date, end_date=end_date)
+                if df is not None and not df.empty:
+                    series = {
+                        idx.strftime("%Y-%m-%d"): float(row["close"])
+                        for idx, row in df.iterrows()
+                        if row.get("close") is not None
+                    }
+                    if series:
+                        logger.info(f"✅ 批量预取个股价格成功: {symbol} {len(series)} 天")
+                        return series
+        except Exception as e:
+            logger.warning(f"⚠️ 批量预取个股价格失败(Tushare): {e}")
+
+        # 2. 备选方案：AkShare 整段拉取
+        try:
+            import akshare as ak
+            import pandas as pd
+
+            code = _normalize_symbol(symbol)
+            df = await asyncio.to_thread(
+                ak.stock_zh_a_hist,
+                symbol=code,
+                period="daily",
+                start_date=start_date.replace("-", ""),
+                end_date=end_date.replace("-", ""),
+                adjust="qfq"
+            )
+            if df is not None and not df.empty:
+                df["日期"] = pd.to_datetime(df["日期"]).dt.strftime("%Y-%m-%d")
+                series = {
+                    str(row["日期"]): float(row["收盘"])
+                    for _, row in df.iterrows()
+                }
+                if series:
+                    logger.info(f"✅ 批量预取个股价格成功(AkShare): {symbol} {len(series)} 天")
+                    return series
+        except Exception as e:
+            logger.warning(f"⚠️ 批量预取个股价格失败(AkShare): {e}")
+
+        return {}
+
+    async def _prefetch_benchmark_prices(self, start_date: str, end_date: str) -> Dict[str, float]:
+        """批量预取基准指数价格，避免逐日远程请求"""
+        # 1. Tushare 区间拉取
+        try:
+            from tradingagents.dataflows.providers.china.tushare import get_tushare_provider
+            import pandas as pd
+
+            ts_provider = get_tushare_provider()
+            if ts_provider and ts_provider.is_available():
+                df = await asyncio.to_thread(
+                    ts_provider.api.index_daily,
+                    ts_code="000001.SH",
+                    start_date=start_date.replace("-", ""),
+                    end_date=end_date.replace("-", "")
+                )
+                if df is not None and not df.empty:
+                    df["trade_date"] = pd.to_datetime(df["trade_date"], format="%Y%m%d").dt.strftime("%Y-%m-%d")
+                    series = {
+                        str(row["trade_date"]): float(row["close"])
+                        for _, row in df.iterrows()
+                    }
+                    if series:
+                        logger.info(f"✅ 批量预取基准价格成功: {len(series)} 天")
+                        return series
+        except Exception as e:
+            logger.warning(f"⚠️ 批量预取基准价格失败(Tushare): {e}")
+
+        # 2. AkShare 区间裁剪
+        try:
+            import akshare as ak
+            import pandas as pd
+
+            df = await asyncio.to_thread(ak.stock_zh_index_daily, symbol="sh000001")
+            if df is not None and not df.empty:
+                df["date_str"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+                filtered = df[(df["date_str"] >= start_date) & (df["date_str"] <= end_date)]
+                series = {
+                    str(row["date_str"]): float(row["close"])
+                    for _, row in filtered.iterrows()
+                }
+                if series:
+                    logger.info(f"✅ 批量预取基准价格成功(AkShare): {len(series)} 天")
+                    return series
+        except Exception as e:
+            logger.warning(f"⚠️ 批量预取基准价格失败(AkShare): {e}")
+
+        return {}
+
+    async def _warmup_market_data(self, trading_days: List[str]):
+        """提前拉取整段行情，减少回测主循环中的逐日 I/O"""
+        if not trading_days:
+            return
+
+        stock_prices, benchmark_prices = await asyncio.gather(
+            self._prefetch_stock_prices(self.config.symbol, trading_days[0], trading_days[-1]),
+            self._prefetch_benchmark_prices(trading_days[0], trading_days[-1]),
+        )
+        self._stock_price_cache.update(stock_prices)
+        self._benchmark_price_cache.update(benchmark_prices)
+
+    def _get_analysis_runtime(self) -> Dict[str, Any]:
+        """构建并缓存回测期间复用的分析运行时配置"""
+        if self._analysis_runtime is not None:
+            return self._analysis_runtime
+
+        from app.core.unified_config import unified_config
+        from app.services.simple_analysis_service import (
+            create_analysis_config,
+            get_provider_and_url_by_model_sync,
+        )
+
+        quick_model = self.config.quick_analysis_model or unified_config.get_quick_analysis_model()
+        deep_model = self.config.deep_analysis_model or unified_config.get_deep_analysis_model()
+
+        quick_model_config = None
+        deep_model_config = None
+        for llm_config in unified_config.get_llm_configs():
+            if llm_config.model_name == quick_model:
+                quick_model_config = {
+                    "max_tokens": llm_config.max_tokens,
+                    "temperature": llm_config.temperature,
+                    "timeout": llm_config.timeout,
+                    "retry_times": llm_config.retry_times,
+                    "api_base": llm_config.api_base,
+                }
+            if llm_config.model_name == deep_model:
+                deep_model_config = {
+                    "max_tokens": llm_config.max_tokens,
+                    "temperature": llm_config.temperature,
+                    "timeout": llm_config.timeout,
+                    "retry_times": llm_config.retry_times,
+                    "api_base": llm_config.api_base,
+                }
+
+        quick_provider_info = get_provider_and_url_by_model_sync(quick_model)
+        deep_provider_info = get_provider_and_url_by_model_sync(deep_model)
+        quick_provider = quick_provider_info["provider"]
+        deep_provider = deep_provider_info["provider"]
+
+        config = create_analysis_config(
+            research_depth=self.config.research_depth,
+            selected_analysts=self.config.selected_analysts,
+            quick_model=quick_model,
+            deep_model=deep_model,
+            llm_provider=quick_provider,
+            market_type="A股",
+            quick_model_config=quick_model_config,
+            deep_model_config=deep_model_config,
+        )
+        config["quick_provider"] = quick_provider
+        config["deep_provider"] = deep_provider
+        config["quick_backend_url"] = quick_provider_info["backend_url"]
+        config["deep_backend_url"] = deep_provider_info["backend_url"]
+        config["backend_url"] = quick_provider_info["backend_url"]
+
+        self._analysis_runtime = {
+            "quick_model": quick_model,
+            "deep_model": deep_model,
+            "quick_provider": quick_provider,
+            "deep_provider": deep_provider,
+            "config": config,
+            # 仅在禁用记忆时复用图实例，避免跨日状态污染。
+            "reuse_graph": not config.get("memory_enabled", True),
+        }
+
+        logger.info(
+            "🔍 [回测模型路由] quick=%s(%s), deep=%s(%s), reuse_graph=%s",
+            quick_model,
+            quick_provider,
+            deep_model,
+            deep_provider,
+            self._analysis_runtime["reuse_graph"],
+        )
+        return self._analysis_runtime
+
+    def _get_trading_graph(self):
+        """获取可复用或按需创建的 TradingAgentsGraph 实例"""
+        runtime = self._get_analysis_runtime()
+        from tradingagents.graph.trading_graph import TradingAgentsGraph
+
+        if runtime["reuse_graph"]:
+            if self._reusable_trading_graph is None:
+                self._reusable_trading_graph = TradingAgentsGraph(
+                    selected_analysts=self.config.selected_analysts,
+                    debug=False,
+                    config=runtime["config"]
+                )
+            return self._reusable_trading_graph
+
+        return TradingAgentsGraph(
+            selected_analysts=self.config.selected_analysts,
+            debug=False,
+            config=runtime["config"]
+        )
+
     async def _run_ai_analysis(self, symbol: str, date_str: str) -> Dict:
         """调用 TradingAgentsGraph 执行 AI 分析"""
         try:
-            from app.core.unified_config import unified_config
-            from app.services.simple_analysis_service import (
-                create_analysis_config,
-                get_provider_and_url_by_model_sync,
+            trading_graph = self._get_trading_graph()
+
+            # 在线程池中执行同步分析，避免每个交易日重复创建线程池。
+            loop = asyncio.get_running_loop()
+            result_tuple = await loop.run_in_executor(
+                self._executor,
+                trading_graph.propagate,
+                _normalize_symbol(symbol),
+                date_str
             )
-
-            quick_model = self.config.quick_analysis_model or unified_config.get_quick_analysis_model()
-            deep_model = self.config.deep_analysis_model or unified_config.get_deep_analysis_model()
-
-            quick_model_config = None
-            deep_model_config = None
-            for llm_config in unified_config.get_llm_configs():
-                if llm_config.model_name == quick_model:
-                    quick_model_config = {
-                        "max_tokens": llm_config.max_tokens,
-                        "temperature": llm_config.temperature,
-                        "timeout": llm_config.timeout,
-                        "retry_times": llm_config.retry_times,
-                        "api_base": llm_config.api_base,
-                    }
-                if llm_config.model_name == deep_model:
-                    deep_model_config = {
-                        "max_tokens": llm_config.max_tokens,
-                        "temperature": llm_config.temperature,
-                        "timeout": llm_config.timeout,
-                        "retry_times": llm_config.retry_times,
-                        "api_base": llm_config.api_base,
-                    }
-
-            quick_provider_info = get_provider_and_url_by_model_sync(quick_model)
-            deep_provider_info = get_provider_and_url_by_model_sync(deep_model)
-            quick_provider = quick_provider_info["provider"]
-            deep_provider = deep_provider_info["provider"]
-
-            config = create_analysis_config(
-                research_depth=self.config.research_depth,
-                selected_analysts=self.config.selected_analysts,
-                quick_model=quick_model,
-                deep_model=deep_model,
-                llm_provider=quick_provider,
-                market_type="A股",
-                quick_model_config=quick_model_config,
-                deep_model_config=deep_model_config,
-            )
-            config["quick_provider"] = quick_provider
-            config["deep_provider"] = deep_provider
-            config["quick_backend_url"] = quick_provider_info["backend_url"]
-            config["deep_backend_url"] = deep_provider_info["backend_url"]
-            config["backend_url"] = quick_provider_info["backend_url"]
-
-            logger.info(
-                "🔍 [回测模型路由] quick=%s(%s), deep=%s(%s)",
-                quick_model,
-                quick_provider,
-                deep_model,
-                deep_provider,
-            )
-
-            from tradingagents.graph.trading_graph import TradingAgentsGraph
-            trading_graph = TradingAgentsGraph(
-                selected_analysts=self.config.selected_analysts,
-                debug=False,
-                config=config
-            )
-
-            # 在线程池中执行同步分析
-            loop = asyncio.get_event_loop()
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                result_tuple = await loop.run_in_executor(
-                    executor,
-                    trading_graph.propagate,
-                    _normalize_symbol(symbol),
-                    date_str
-                )
 
             # propagate 返回 (final_state, decision) 元组
             if isinstance(result_tuple, tuple) and len(result_tuple) == 2:
@@ -419,6 +586,10 @@ class BacktestEngine:
         total_days = len(trading_days)
         logger.info(f"📅 共 {total_days} 个交易日")
 
+        # 1b. 批量预热整段行情，减少逐日 I/O 往返
+        await self._update_progress(4, trading_days[0], "📦 预加载历史行情...")
+        await self._warmup_market_data(trading_days)
+
         # 2. 获取基准起始价格（用于计算基准收益率）
         benchmark_start_price: Optional[float] = None
         try:
@@ -434,9 +605,22 @@ class BacktestEngine:
             "exec_buy": 0, "exec_sell": 0, "exec_abort_buy": 0, "exec_abort_sell": 0,
             "hold_reasons": []
         }
+        decision_interval_days = max(1, int(self.config.decision_interval_days or 1))
+        last_decision: Dict[str, Any] = {}
+        last_decision_action = TradeAction.HOLD
+        last_decision_confidence = 0.0
+        last_decision_reason = "暂无AI信号"
+        last_analysis_idx = -decision_interval_days
+
         for idx, date_str in enumerate(trading_days):
             progress = int(5 + (idx / total_days) * 90)
-            await self._update_progress(progress, date_str, f"🔍 分析 {date_str} ({idx+1}/{total_days})...")
+            should_run_ai = (
+                not last_decision or
+                idx == 0 or
+                (idx - last_analysis_idx) >= decision_interval_days
+            )
+            step_prefix = "🔍 分析" if should_run_ai else "♻️ 复用信号"
+            await self._update_progress(progress, date_str, f"{step_prefix} {date_str} ({idx+1}/{total_days})...")
 
             # 3a. 获取当日收盘价
             price = await self._get_stock_price(self.config.symbol, date_str)
@@ -451,8 +635,19 @@ class BacktestEngine:
             limit_up, limit_down = None, None
 
             # 3c. 执行 AI 分析
-            decision = await self._run_ai_analysis(self.config.symbol, date_str)
-            action, confidence, reason = self._parse_ai_decision(decision)
+            if should_run_ai:
+                decision = await self._run_ai_analysis(self.config.symbol, date_str)
+                action, confidence, reason = self._parse_ai_decision(decision)
+                last_decision = decision or {}
+                last_decision_action = action
+                last_decision_confidence = confidence
+                last_decision_reason = reason
+                last_analysis_idx = idx
+            else:
+                decision = last_decision
+                action = last_decision_action
+                confidence = last_decision_confidence
+                reason = f"[复用前次信号] {last_decision_reason}"
 
             # 3d. T+1 限制检查
             t1_restricted = False
@@ -790,6 +985,7 @@ class BacktestService:
     async def _run_task_background(self, task: BacktestTask):
         """后台运行回测任务"""
         db = get_mongo_db()
+        engine: Optional[BacktestEngine] = None
         try:
             # 更新状态为 running
             started_at = now_tz()
@@ -826,6 +1022,9 @@ class BacktestService:
                     "current_step": f"❌ 失败: {str(e)[:200]}"
                 }}
             )
+        finally:
+            if engine is not None:
+                await engine.close()
 
     async def get_task_status(self, task_id: str) -> Optional[Dict]:
         """获取任务状态"""

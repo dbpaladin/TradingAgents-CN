@@ -96,6 +96,15 @@
               </el-radio-group>
             </el-form-item>
 
+            <el-form-item label="回测速度模式">
+              <el-radio-group v-model="form.decision_interval_days">
+                <el-radio :label="1">标准：每个交易日都分析</el-radio>
+                <el-radio :label="3">加速：每 3 个交易日分析一次</el-radio>
+                <el-radio :label="5">极速：每 5 个交易日分析一次</el-radio>
+              </el-radio-group>
+              <div class="model-hint">加速/极速模式会在中间交易日复用上一次 AI 信号，适合先做大区间粗筛。</div>
+            </el-form-item>
+
             <!-- AI模型配置 -->
             <el-form-item label="快速分析模型">
               <el-select
@@ -150,9 +159,9 @@
             <!-- 费用预估提示 -->
             <el-alert type="warning" :closable="false" class="cost-alert">
               <template #title>
-                <span>💰 费用预估：约 {{ estimatedTradingDays }} 个交易日 × {{ form.selected_analysts.length }} 位分析师</span>
+                <span>💰 费用预估：约 {{ estimatedAnalysisRuns }} 次 AI 重算 × {{ form.selected_analysts.length }} 位分析师</span>
               </template>
-              建议先用"快速"深度 + 2 位分析师测试，以控制 Token 消耗。
+              当前区间约 {{ estimatedTradingDays }} 个交易日。建议先用“快速”深度 + 2 位分析师 + 加速/极速模式做首轮筛查。
             </el-alert>
 
             <!-- 提交按钮 -->
@@ -175,7 +184,7 @@
             <div class="card-header">
               <el-icon><Clock /></el-icon>
               <span>历史回测</span>
-              <el-button link @click="loadTaskHistory" :loading="loadingHistory" class="refresh-btn">
+              <el-button link @click="refreshTaskHistory" :loading="loadingHistory" class="refresh-btn">
                 <el-icon><Refresh /></el-icon>
               </el-button>
             </div>
@@ -395,6 +404,7 @@ const form = ref({
   position_ratio_pct: 100,            // 百分比（1-100）
   selected_analysts: ['market', 'fundamentals'],
   research_depth: '快速',
+  decision_interval_days: 1,
   quick_analysis_model: '',
   deep_analysis_model: '',
   name: ''
@@ -439,6 +449,12 @@ const estimatedTradingDays = computed(() => {
   const end = new Date(form.value.dateRange[1])
   const days = Math.ceil((end.getTime() - start.getTime()) / (1000 * 86400))
   return Math.round(days * 5 / 7)  // 粗略估算
+})
+
+const estimatedAnalysisRuns = computed(() => {
+  const tradingDays = estimatedTradingDays.value
+  if (!tradingDays) return 0
+  return Math.max(1, Math.ceil(tradingDays / Math.max(1, form.value.decision_interval_days)))
 })
 
 const executedTrades = computed(() =>
@@ -542,6 +558,7 @@ async function submitBacktest() {
         position_ratio: form.value.position_ratio_pct / 100,
         selected_analysts: form.value.selected_analysts,
         research_depth: form.value.research_depth,
+        decision_interval_days: form.value.decision_interval_days,
         quick_analysis_model: form.value.quick_analysis_model || undefined,
         deep_analysis_model: form.value.deep_analysis_model || undefined,
         name: form.value.name
@@ -637,6 +654,10 @@ async function loadTaskHistory(options?: { autoResumeRunning?: boolean }) {
   } finally {
     loadingHistory.value = false
   }
+}
+
+function refreshTaskHistory() {
+  void loadTaskHistory()
 }
 
 async function selectTask(task: BacktestTaskListItem) {

@@ -21,6 +21,7 @@ export interface BacktestConfig {
   research_depth?: string
   quick_analysis_model?: string
   deep_analysis_model?: string
+  decision_interval_days?: number
   name?: string
   description?: string
 }

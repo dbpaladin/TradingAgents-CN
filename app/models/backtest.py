@@ -63,6 +63,12 @@ class BacktestConfig(BaseModel):
     research_depth: str = Field(default="快速", description="分析深度，建议用'快速'以控制成本")
     quick_analysis_model: Optional[str] = Field(None, description="快速分析模型")
     deep_analysis_model: Optional[str] = Field(None, description="深度分析模型")
+    decision_interval_days: int = Field(
+        default=1,
+        ge=1,
+        le=20,
+        description="每隔多少个交易日重新运行一次 AI；1 表示逐日分析，>1 表示中间交易日复用上次信号"
+    )
 
     # 描述
     name: str = Field(default="", description="回测名称")

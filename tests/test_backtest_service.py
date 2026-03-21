@@ -304,7 +304,7 @@ class TestBacktestModelRouting:
              patch("app.services.simple_analysis_service.create_analysis_config", side_effect=fake_create_analysis_config), \
              patch("app.services.simple_analysis_service.get_provider_and_url_by_model_sync") as mock_provider_lookup, \
              patch("tradingagents.graph.trading_graph.TradingAgentsGraph", FakeGraph), \
-             patch("asyncio.get_event_loop", return_value=FakeLoop()):
+             patch("asyncio.get_running_loop", return_value=FakeLoop()):
             mock_provider_lookup.side_effect = [
                 {
                     "provider": "openai",
@@ -329,6 +329,101 @@ class TestBacktestModelRouting:
         assert captured["graph_config"]["quick_backend_url"] == "https://api.openai.com/v1"
         assert captured["graph_config"]["deep_backend_url"] == "https://api.openai.com/v1"
         assert captured["graph_config"]["backend_url"] == "https://api.openai.com/v1"
+
+    @pytest.mark.asyncio
+    async def test_run_ai_analysis_reuses_graph_in_fast_mode(self):
+        from app.services.backtest_service import BacktestEngine
+
+        task = make_test_task()
+        engine = BacktestEngine(task)
+
+        fake_runtime = {
+            "config": {"memory_enabled": False},
+            "reuse_graph": True,
+        }
+        created_graphs = []
+
+        class FakeGraph:
+            def __init__(self, selected_analysts, debug, config):
+                created_graphs.append((selected_analysts, debug, config))
+
+            def propagate(self, symbol, date_str):
+                return {}, {"action": "HOLD", "confidence": 0.1}
+
+        class FakeLoop:
+            async def run_in_executor(self, executor, func, *args):
+                return func(*args)
+
+        with patch.object(engine, "_get_analysis_runtime", return_value=fake_runtime), \
+             patch("tradingagents.graph.trading_graph.TradingAgentsGraph", FakeGraph), \
+             patch("asyncio.get_running_loop", return_value=FakeLoop()):
+            await engine._run_ai_analysis("000001", "2026-02-24")
+            await engine._run_ai_analysis("000001", "2026-02-25")
+
+        assert len(created_graphs) == 1
+
+
+class TestBacktestMarketDataCache:
+    @pytest.mark.asyncio
+    async def test_get_stock_price_prefers_prefetched_cache(self):
+        from app.services.backtest_service import BacktestEngine
+
+        engine = BacktestEngine(make_test_task())
+        engine._stock_price_cache["2024-03-01"] = 12.34
+
+        with patch("tradingagents.dataflows.providers.china.tushare.get_tushare_provider") as mock_provider:
+            price = await engine._get_stock_price("000001", "2024-03-01")
+
+        assert price == 12.34
+        mock_provider.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_benchmark_price_prefers_prefetched_cache(self):
+        from app.services.backtest_service import BacktestEngine
+
+        engine = BacktestEngine(make_test_task())
+        engine._benchmark_price_cache["2024-03-01"] = 3456.78
+
+        with patch("tradingagents.dataflows.providers.china.tushare.get_tushare_provider") as mock_provider:
+            price = await engine._get_benchmark_price("2024-03-01")
+
+        assert price == 3456.78
+        mock_provider.assert_not_called()
+
+
+class TestBacktestDecisionInterval:
+    @pytest.mark.asyncio
+    async def test_run_reuses_last_signal_between_analysis_intervals(self):
+        from app.services.backtest_service import BacktestEngine
+
+        task = make_test_task(start_date="2024-03-01", end_date="2024-03-07")
+        task.config.decision_interval_days = 3
+        engine = BacktestEngine(task)
+
+        trading_days = [
+            "2024-03-01",
+            "2024-03-04",
+            "2024-03-05",
+            "2024-03-06",
+            "2024-03-07",
+        ]
+
+        engine._update_progress = AsyncMock()
+        engine._get_trading_calendar = AsyncMock(return_value=trading_days)
+        engine._warmup_market_data = AsyncMock()
+        engine._get_stock_price = AsyncMock(side_effect=[10.0, 10.2, 10.4, 10.6, 10.8])
+        engine._get_benchmark_price = AsyncMock(side_effect=[3000.0, 3000.0, 3010.0, 3020.0, 3030.0, 3040.0])
+        engine._run_ai_analysis = AsyncMock(side_effect=[
+            {"action": "BUY", "confidence": 0.8, "summary": "首次分析买入"},
+            {"action": "SELL", "confidence": 0.7, "summary": "间隔到期后卖出"},
+        ])
+
+        result = await engine.run()
+
+        assert result.metrics.trading_days == 5
+        assert engine._run_ai_analysis.await_count == 2
+        assert result.trades[1].ai_reason.startswith("[复用前次信号]")
+        assert result.trades[2].ai_reason.startswith("[复用前次信号]")
 
 
 # ===== 测试：绩效指标计算 =====
