@@ -425,6 +425,38 @@ class TestBacktestDecisionInterval:
         assert result.trades[1].ai_reason.startswith("[复用前次信号]")
         assert result.trades[2].ai_reason.startswith("[复用前次信号]")
 
+    @pytest.mark.asyncio
+    async def test_run_does_not_reuse_hold_signal_between_analysis_intervals(self):
+        from app.services.backtest_service import BacktestEngine
+
+        task = make_test_task(start_date="2024-03-01", end_date="2024-03-05")
+        task.config.decision_interval_days = 3
+        engine = BacktestEngine(task)
+
+        trading_days = [
+            "2024-03-01",
+            "2024-03-04",
+            "2024-03-05",
+        ]
+
+        engine._update_progress = AsyncMock()
+        engine._get_trading_calendar = AsyncMock(return_value=trading_days)
+        engine._warmup_market_data = AsyncMock()
+        engine._get_stock_price = AsyncMock(side_effect=[10.0, 10.2, 10.4])
+        engine._get_benchmark_price = AsyncMock(side_effect=[3000.0, 3000.0, 3010.0, 3020.0])
+        engine._run_ai_analysis = AsyncMock(side_effect=[
+            {"action": "HOLD", "confidence": 0.3, "summary": "首日观望"},
+            {"action": "BUY", "confidence": 0.8, "summary": "次日转强"},
+            {"action": "SELL", "confidence": 0.7, "summary": "第三日止盈"},
+        ])
+
+        result = await engine.run()
+
+        assert result.metrics.trading_days == 3
+        assert engine._run_ai_analysis.await_count == 2
+        assert not result.trades[1].ai_reason.startswith("[复用前次信号]")
+        assert result.trades[2].ai_reason.startswith("[复用前次信号]")
+
 
 class TestBacktestAutoOptimization:
     def test_auto_optimize_promotes_heavy_backtest_to_fast_interval(self):

@@ -165,6 +165,15 @@ class BacktestEngine:
         else:
             return TradeAction.HOLD, confidence, reason or "无明确AI信号"
 
+    def _can_reuse_decision(self, action: TradeAction) -> bool:
+        """
+        判断上次 AI 信号是否适合跨日复用。
+
+        HOLD 通常依赖当天语境，跨日复用很容易把整段回测锁死为 0 交易，
+        因此仅复用明确的 BUY/SELL 方向信号。
+        """
+        return action in {TradeAction.BUY, TradeAction.SELL}
+
     async def _get_trading_calendar(self, start_date: str, end_date: str) -> List[str]:
         """
         获取 A股交易日历（优先使用 Tushare，备选 AkShare）
@@ -614,8 +623,9 @@ class BacktestEngine:
 
         for idx, date_str in enumerate(trading_days):
             progress = int(5 + (idx / total_days) * 90)
+            can_reuse_last_decision = bool(last_decision) and self._can_reuse_decision(last_decision_action)
             should_run_ai = (
-                not last_decision or
+                not can_reuse_last_decision or
                 idx == 0 or
                 (idx - last_analysis_idx) >= decision_interval_days
             )

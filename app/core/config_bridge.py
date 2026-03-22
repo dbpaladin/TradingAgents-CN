@@ -177,15 +177,25 @@ def bridge_config_to_env():
             logger.warning("⚠️  将尝试从 JSON 文件读取配置作为后备方案")
             data_source_configs = unified_config.get_data_source_configs()
 
+        env_tushare_endpoint = (os.getenv('TUSHARE_ENDPOINT') or '').strip()
+        prefer_env_tushare = bool(
+            env_tushare_endpoint and env_tushare_endpoint != 'http://api.tushare.pro'
+        )
+
         for ds_config in data_source_configs:
             if ds_config.enabled and ds_config.api_key:
                 # Tushare Token
-                # 🔥 优先级：数据库配置 > .env 文件（用户在 Web 后台修改后立即生效）
+                # 🔥 默认优先级：数据库配置 > .env 文件（用户在 Web 后台修改后立即生效）
+                # 兼容规则：如果 .env 中配置了自定义 TUSHARE_ENDPOINT，说明使用第三方源，
+                # 此时 token/endpoint 必须配套，优先使用 .env 中的 TUSHARE_TOKEN。
                 if ds_config.type.value == 'tushare':
                     existing_token = os.getenv('TUSHARE_TOKEN')
 
+                    if prefer_env_tushare and existing_token and not existing_token.startswith("your_"):
+                        logger.info(f"  ✓ 检测到自定义 TUSHARE_ENDPOINT，优先使用 .env 中的 TUSHARE_TOKEN (长度: {len(existing_token)})")
+                        logger.info(f"  ℹ️  第三方 Tushare 源模式已启用，跳过数据库 TUSHARE_TOKEN 覆盖")
                     # 优先使用数据库配置
-                    if ds_config.api_key and not ds_config.api_key.startswith("your_"):
+                    elif ds_config.api_key and not ds_config.api_key.startswith("your_"):
                         os.environ['TUSHARE_TOKEN'] = ds_config.api_key
                         logger.info(f"  ✓ 使用数据库中的 TUSHARE_TOKEN (长度: {len(ds_config.api_key)})")
                         if existing_token and existing_token != ds_config.api_key:
@@ -734,4 +744,3 @@ __all__ = [
     'reload_bridged_config',
     'sync_pricing_config_now',
 ]
-

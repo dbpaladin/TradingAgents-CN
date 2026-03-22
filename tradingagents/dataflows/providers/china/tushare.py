@@ -131,6 +131,21 @@ class TushareProvider(BaseStockDataProvider):
 
         return DEFAULT_TUSHARE_ENDPOINT, "default"
 
+    def _should_prefer_env_credentials(self) -> bool:
+        """
+        判断是否应优先使用 .env 中的 Tushare 凭证。
+
+        历史兼容规则：
+        - 如果 .env 中配置了自定义 TUSHARE_ENDPOINT，则视为第三方 Tushare 源
+        - 这类场景下 token 与 endpoint 必须成对使用，优先级应为 .env > database
+        """
+        env_endpoint = self.config.get("endpoint")
+        if not isinstance(env_endpoint, str):
+            return False
+
+        env_endpoint = env_endpoint.strip()
+        return bool(env_endpoint and env_endpoint != DEFAULT_TUSHARE_ENDPOINT)
+
     def _configure_api_client(self, token: str, endpoint: str) -> None:
         """初始化 Tushare API 客户端并应用自定义 endpoint"""
         ts.set_token(token)
@@ -148,25 +163,39 @@ class TushareProvider(BaseStockDataProvider):
     ) -> List[Dict[str, str]]:
         """构建按优先级排序的 Tushare 连接配置候选列表"""
         candidates: List[Dict[str, str]] = []
-
-        if db_token and not db_token.startswith("your_"):
-            endpoint, endpoint_source = self._resolve_endpoint(db_endpoint)
-            candidates.append({
-                "token": db_token,
-                "token_source": "database",
-                "endpoint": endpoint,
-                "endpoint_source": endpoint_source,
-            })
+        prefer_env = self._should_prefer_env_credentials()
 
         env_token = self.config.get("token")
         env_endpoint, env_endpoint_source = self._resolve_endpoint(None)
+        env_candidate = None
         if env_token and not env_token.startswith("your_"):
-            candidates.append({
+            env_candidate = {
                 "token": env_token,
                 "token_source": "env",
                 "endpoint": env_endpoint,
                 "endpoint_source": env_endpoint_source,
-            })
+            }
+
+        db_candidate = None
+        if db_token and not db_token.startswith("your_"):
+            endpoint, endpoint_source = self._resolve_endpoint(db_endpoint)
+            db_candidate = {
+                "token": db_token,
+                "token_source": "database",
+                "endpoint": endpoint,
+                "endpoint_source": endpoint_source,
+            }
+
+        if prefer_env:
+            if env_candidate:
+                candidates.append(env_candidate)
+            if db_candidate:
+                candidates.append(db_candidate)
+        else:
+            if db_candidate:
+                candidates.append(db_candidate)
+            if env_candidate:
+                candidates.append(env_candidate)
 
         return candidates
 
