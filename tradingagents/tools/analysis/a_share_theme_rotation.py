@@ -538,10 +538,20 @@ class AShareThemeRotationAnalyzer:
 
         if target_memberships:
             main_theme = target_memberships[0]
+            mainline_name = top_themes[0].name if top_themes else ""
+            role_map = {
+                "龙头核心": "主线核心" if main_theme.name == mainline_name else "非主线",
+                "前排核心": "主线核心" if main_theme.name == mainline_name else "非主线",
+                "补涨跟随": "主线外延" if main_theme.name == mainline_name else "非主线",
+                "题材跟风": "主线外延" if main_theme.name == mainline_name else "非主线",
+                "边缘成员": "主线外延" if main_theme.name == mainline_name else "非主线",
+            }
+            normalized_role = role_map.get(main_theme.target_role, "非主线")
             target_payload = {
                 "ticker": ticker,
                 "theme_tags": [item.name for item in target_memberships[:3]],
-                "role": main_theme.target_role,
+                "role": normalized_role,
+                "raw_role": main_theme.target_role,
                 "is_mainline": main_theme.name == (top_themes[0].name if top_themes else ""),
                 "leader_score": round(
                     min(100.0, main_theme.heat_score * 0.35 + main_theme.continuity_score * 0.4 + (100 - main_theme.fade_score) * 0.25),
@@ -561,7 +571,8 @@ class AShareThemeRotationAnalyzer:
             target_payload = {
                 "ticker": ticker,
                 "theme_tags": [],
-                "role": "独立逻辑/非主线",
+                "role": "非主线",
+                "raw_role": "独立逻辑/非主线",
                 "is_mainline": False,
                 "leader_score": 25.0,
                 "risk_flags": ["未进入主线题材核心池"],
@@ -594,11 +605,17 @@ class AShareThemeRotationAnalyzer:
             "",
             "### 目标股题材定位",
             f"- 股票代码: **{ticker}**",
-            f"- 所属题材: **{'、'.join(summary.target_stock.get('theme_tags', [])) or '暂无明显题材归属'}**",
+            f"- 所属题材: **{'、'.join(summary.target_stock.get('theme_tags', [])) or '暂无主线题材归属，偏独立逻辑'}**",
             f"- 角色定位: **{summary.target_stock.get('role', '未知')}**",
             f"- 是否主线: **{'是' if summary.target_stock.get('is_mainline') else '否'}**",
             f"- 龙头/核心评分: **{summary.target_stock.get('leader_score', 0)}/100**",
+            f"- 原始角色: **{summary.target_stock.get('raw_role', '未知')}**",
             f"- 风险提示: **{'、'.join(summary.target_stock.get('risk_flags', []))}**",
+            "",
+            "### 角色说明",
+            "- `主线核心`：位于当前主线板块的龙头或前排核心，资金辨识度高。",
+            "- `主线外延`：与当前主线存在明确产业链/板块关联，但不是涨停前排或资金核心。",
+            "- `非主线`：未进入当前主线题材交易框架，更多依赖独立逻辑。",
             "",
             "### 主线题材 Top5",
         ]

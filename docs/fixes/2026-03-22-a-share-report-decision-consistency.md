@@ -52,6 +52,43 @@
 - 当前端只选 `sentiment` 时，自动补上 `institutional_theme`
 - 避免 A 股报告在情绪/资金/题材齐全时仍漏掉机构布局题材分析
 
+## 第二阶段补强
+
+在复核 `601669_分析报告_2026-03-22.pdf` 后，又补做了第二阶段优化，主要解决“口径更一致、输出更自然”的问题。
+
+### 1. 题材角色从工具源头统一
+
+- 在 `a_share_theme_rotation.py` 中新增角色映射
+- 将原始角色与统一展示角色拆开：
+  - `raw_role` 保留原始工具判断
+  - `role` 统一对外展示为 `主线核心 / 主线外延 / 非主线`
+- 若个股属于当前主线板块但只是跟风、补涨或边缘成员，优先映射为 `主线外延`
+- 报告正文新增“角色说明”，降低“标签看不懂”或“标签过硬”的问题
+
+### 2. 情绪框架与题材框架对齐
+
+- A股情绪分析师新增约束，要求明确区分：
+  - `全市场情绪周期`
+  - `局部主线热度`
+- 允许同时存在“全市场退潮/分化”和“局部主线强化/抱团避险”
+- 对非龙头个股必须补充“板块内轮动/补涨可能”的概率判断
+
+### 3. 多空辩论去复读
+
+- 激进、保守、中性三位分析师均新增“去复读”约束
+- 每条观点尽量使用不同证据点，不再反复改写同一组结论
+- 要求分别回应对方而非各说各话
+- 当证据不足时，允许直接指出“证据缺口”，降低伪对抗感
+
+### 4. 本阶段涉及文件
+
+- `tradingagents/tools/analysis/a_share_theme_rotation.py`
+- `tradingagents/agents/analysts/theme_rotation_analyst.py`
+- `tradingagents/agents/analysts/a_share_sentiment_analyst.py`
+- `tradingagents/agents/risk_mgmt/aggresive_debator.py`
+- `tradingagents/agents/risk_mgmt/conservative_debator.py`
+- `tradingagents/agents/risk_mgmt/neutral_debator.py`
+
 ## 预期效果
 
 - 降低题材归类自相矛盾的概率
@@ -65,6 +102,11 @@
 
 ```bash
 python -m py_compile \
+  tradingagents/tools/analysis/a_share_theme_rotation.py \
+  tradingagents/agents/analysts/a_share_sentiment_analyst.py \
+  tradingagents/agents/risk_mgmt/aggresive_debator.py \
+  tradingagents/agents/risk_mgmt/conservative_debator.py \
+  tradingagents/agents/risk_mgmt/neutral_debator.py \
   tradingagents/agents/analysts/theme_rotation_analyst.py \
   tradingagents/agents/analysts/institutional_theme_analyst.py \
   tradingagents/agents/managers/risk_manager.py \
@@ -75,3 +117,4 @@ python -m py_compile \
 ## 关联归档
 
 - 会话归档：`history_chat/2026-03-22_104630_601669报告复核与决策链路修复归档.md`
+- 会话归档：`history_chat/2026-03-22_174609_601669报告二轮优化_题材口径统一与辩论去复读.md`
