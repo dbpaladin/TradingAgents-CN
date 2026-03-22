@@ -76,6 +76,7 @@
 - [代码结构](./development/code-structure.md) - 代码组织结构
 - [扩展开发](./development/extending.md) - 如何扩展框架
 - [测试指南](./development/testing.md) - 测试策略和方法
+- [文档更新策略](./maintenance/documentation-update-policy.md) - 功能、配置、部署改动时应同步更新哪些文档
 - [A股研报质量优化记录](./improvements/a-share-report-quality-upgrade-2026-03-21.md) - `601669` 报告数据补齐、研报化升级与网页链路同步说明
 
 ### 📋 版本发布 (v0.1.7更新)
@@ -90,6 +91,8 @@
 - [数据API](./api/data-api.md) - 数据处理接口
 
 ### 🌐 使用指南
+- [📈 A股回测指南](./guides/a-share-backtest-guide.md) - Web 回测入口、参数说明、速度模式和成本控制建议
+- [🧩 A股分析师扩展说明](./features/a-share-analyst-expansion.md) - `fund_flow / theme_rotation / institutional_theme` 的主链路与前后端联动
 - [🧠 新闻过滤使用指南](./guides/NEWS_FILTERING_USER_GUIDE.md) - 智能新闻分析模块使用方法 (v0.1.12新增) ✨
 - [🤖 多LLM提供商使用指南](./guides/multi-llm-usage-guide.md) - 4大提供商使用方法 (v0.1.11) ✨
 - [💾 模型选择持久化指南](./guides/model-persistence-guide.md) - 配置保存和分享方法 (v0.1.11) ✨
@@ -99,6 +102,8 @@
 - [🇨🇳 A股分析指南](./guides/a-share-analysis-guide.md) - A股市场分析专项指南 (v0.1.7) ✨
 - [⚙️ 配置管理指南](./guides/config-management-guide.md) - 配置管理和成本统计使用方法 (v0.1.7) ✨
 - [🐳 Docker部署指南](./guides/docker-deployment-guide.md) - Docker容器化部署详细指南 (v0.1.7) ✨
+- [🌐 Docker 代理与健康检查更新](./deployment/docker/frontend-api-proxy-update.md) - 相对 API 路径、Nginx 转发和 `/health` / `/api/health` 说明
+- [🔐 认证与启动链路修复](./fixes/backend-auth-and-startup-routing-fixes.md) - 注册接口、健康检查、启动 backfill 与路由兼容修复
 - [📄 报告导出指南](./guides/report-export-guide.md) - 专业报告导出使用指南 (v0.1.7) ✨
 - [🧠 DeepSeek使用指南](./guides/deepseek-usage-guide.md) - DeepSeek V3模型使用指南 (v0.1.7) ✨
 - [📰 新闻分析系统使用指南](./guides/news-analysis-guide.md) - 实时新闻获取与分析指南 ✨

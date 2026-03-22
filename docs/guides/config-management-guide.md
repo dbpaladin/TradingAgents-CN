@@ -32,6 +32,25 @@ TradingAgents-CN 提供了完整的配置管理和成本统计系统，让您可
 - 🔄 **动态配置**: 运行时配置更新
 - 🛡️ **安全管理**: 敏感信息加密存储
 
+## 📌 最近补充的关键配置
+
+### Tushare 自定义端点
+
+如果你使用私有 Tushare 镜像或第三方兼容服务，可以在 `.env` 中显式配置：
+
+```env
+TUSHARE_TOKEN=your_tushare_token_here
+TUSHARE_ENDPOINT=http://api.tushare.pro
+```
+
+规则如下：
+
+- 不配置 `TUSHARE_ENDPOINT` 时，系统默认使用官方 `http://api.tushare.pro`
+- 配置后，数据源配置读取和部分 A 股分析工具会优先使用该端点
+- 更换端点后，建议重启应用并观察首轮同步日志
+
+如果你使用代理访问国外模型，但需要直连国内数据源，请同步维护 `NO_PROXY`。
+
 ## 🚀 快速开始
 
 ### 1. 启动Web界面

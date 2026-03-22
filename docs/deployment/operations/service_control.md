@@ -61,6 +61,42 @@ BACKEND_RELOAD=1 ./scripts/app_services.sh restart
 
 ## 🚀 可控制的服务类型
 
+## 🌐 当前启动拓扑
+
+最近已统一为“两层脚本 + 相对 API 路径”的管理方式：
+
+- `./scripts/docker_services.sh`：只负责 MongoDB / Redis
+- `./scripts/app_services.sh`：统一负责后端和前端
+- 前端通过相对 API 路径访问后端，便于经 Nginx 或代理统一转发
+
+推荐顺序：
+
+```bash
+./scripts/docker_services.sh start
+./scripts/app_services.sh start
+```
+
+常见检查：
+
+```bash
+./scripts/docker_services.sh status
+./scripts/app_services.sh status
+./scripts/app_services.sh logs backend
+./scripts/app_services.sh logs frontend
+```
+
+如果只是本地开发想启用后端热重载：
+
+```bash
+BACKEND_RELOAD=1 ./scripts/app_services.sh restart
+```
+
+注意：
+
+- 热重载模式更适合开发排查，不建议作为长期运行方式
+- 如果启动阶段伴随数据同步任务，热重载下更要关注首轮日志是否阻塞
+- 修改 `.env` 后，需要重启对应服务才会重新加载配置
+
 ### 📊 基础服务
 
 | 配置项 | 默认值 | 说明 |
@@ -192,6 +228,12 @@ BAOSTOCK_QUOTES_SYNC_ENABLED=false
 GET http://localhost:8000/api/health
 ```
 
+如果你通过 Nginx 或统一入口访问前端，建议同时确认：
+
+- 前端页面是否正常打开
+- 浏览器网络请求中的 `/api/*` 是否返回 200
+- 反向代理是否把 API 请求正确转发到后端
+
 ## ⚠️ 注意事项
 
 1. **重启生效**: 修改配置后必须重启应用才能生效
@@ -207,6 +249,7 @@ GET http://localhost:8000/api/health
 1. 检查配置项是否正确设置为 `true`
 2. 查看启动日志是否有错误信息
 3. 确认相关API密钥是否配置正确
+4. 如果使用自定义 `TUSHARE_ENDPOINT`，确认对应域名可达且未被代理误转发
 
 ### 定时任务未执行
 
@@ -218,4 +261,6 @@ GET http://localhost:8000/api/health
 
 1. 适当调整任务执行频率
 2. 禁用不必要的服务
+3. 开发环境优先使用统一脚本，不要再混用旧的 `dev_services.sh`
+4. 若后端启动卡住，优先检查启动期同步任务和外部数据源连接
 3. 监控系统资源使用情况

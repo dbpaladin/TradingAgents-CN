@@ -175,6 +175,25 @@ tail -f logs/tradingagents.log
 - 首轮筛查：`快速` 深度 + `market/fundamentals` + `加速/极速`
 - 二次验证：缩短区间后切回 `标准`
 
+更多参数和结果说明见：
+
+- [A股回测指南](./guides/a-share-backtest-guide.md)
+
+## 🐳 Docker 部署补充说明
+
+如果你使用 Docker 版，请注意当前前端默认走相对 API 路径，并通过 Nginx 转发 `/api` 到后端。
+
+建议确认：
+
+- 前端健康检查：`/health`
+- 后端健康检查：`/api/health`
+- 浏览器中的接口请求是否为 `/api/*`
+
+相关说明见：
+
+- [Docker 部署指南](./guides/docker-deployment-guide.md)
+- [Docker 前端代理与健康检查更新说明](./deployment/docker/frontend-api-proxy-update.md)
+
 ## ❓ 常见问题
 
 ### Q: 启动失败怎么办？

@@ -16,6 +16,27 @@
 
 ## 🚀 立即开始使用
 
+### 自定义 Tushare API 端点
+
+如果你使用的是第三方兼容 Tushare 服务，可以在 `.env` 中配置：
+
+```env
+TUSHARE_TOKEN=your_tushare_token_here
+TUSHARE_ENDPOINT=http://api.tushare.pro
+```
+
+说明：
+
+- 不配置 `TUSHARE_ENDPOINT` 时，默认使用官方 `http://api.tushare.pro`
+- 配置后，统一数据源配置和部分 A 股分析工具会优先读取这个端点
+- 如果你启用了代理，建议把对应域名加入 `NO_PROXY`
+
+常见场景：
+
+- 官方 Tushare：保持默认即可
+- 私有镜像或第三方代理：将 `TUSHARE_ENDPOINT` 改成你的服务地址
+- 切换端点后如启动期有同步任务，建议重启相关服务观察首轮日志
+
 ### 1. 命令行界面 (推荐)
 
 ```bash
@@ -162,6 +183,18 @@ from tradingagents.dataflows import switch_china_data_source
 
 switch_china_data_source("tushare")  # 确保使用Tushare
 ```
+
+## 🔧 推荐配置
+
+```env
+DEFAULT_CHINA_DATA_SOURCE=tushare
+TUSHARE_ENABLED=true
+TUSHARE_TOKEN=your_tushare_token_here
+TUSHARE_ENDPOINT=http://api.tushare.pro
+NO_PROXY=localhost,127.0.0.1,api.tushare.pro
+```
+
+如果你使用自定义域名，请把 `api.tushare.pro` 替换成你的实际域名。
 
 ## ⚡ 性能优化建议
 

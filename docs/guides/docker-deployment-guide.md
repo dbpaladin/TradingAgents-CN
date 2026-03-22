@@ -185,6 +185,20 @@ docker-compose ps
 docker-compose logs -f
 ```
 
+### 当前前后端访问约定
+
+最近的 Docker 编排已经调整为：
+
+- 后端容器暴露 `8000`
+- 前端容器暴露 `3000`
+- 前端默认使用相对 API 路径
+- 如果接入 Nginx，`/api/*` 会转发到后端
+
+这意味着：
+
+- 不建议在前端环境变量中继续写死 `http://localhost:8000`
+- 更推荐通过统一入口访问前端和 API
+
 ### 步骤4: 验证部署
 
 ```bash
@@ -199,6 +213,18 @@ docker-compose ps
 # - TradingAgents-redis-commander (缓存管理)
 ```
 
+进一步建议验证：
+
+```bash
+curl http://localhost:8000/api/health
+```
+
+如果你前面额外接了 Nginx，也建议确认：
+
+```bash
+curl http://localhost/health
+```
+
 ### 步骤5: 访问应用
 
 | 服务 | 地址 | 用途 |
@@ -206,6 +232,24 @@ docker-compose ps
 | **主应用** | http://localhost:8501 | 股票分析界面 |
 | **数据库管理** | http://localhost:8081 | MongoDB管理 |
 | **缓存管理** | http://localhost:8082 | Redis管理 |
+
+## 🌐 代理与健康检查说明
+
+当前 Docker 链路中：
+
+- 前端健康检查使用 `/health`
+- 后端健康检查使用 `/api/health`
+- Nginx 会把 `/api` 转发给后端服务
+
+如果你遇到“前端页面能打开但接口失败”，优先检查：
+
+- 前端是否还在请求绝对地址
+- 反向代理是否正确转发 `/api`
+- 后端容器是否通过健康检查
+
+更多说明见：
+
+- [Docker 前端代理与健康检查更新说明](../deployment/docker/frontend-api-proxy-update.md)
 
 ## 🎯 使用指南
 

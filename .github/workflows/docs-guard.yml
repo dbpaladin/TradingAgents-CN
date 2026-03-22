@@ -1,0 +1,28 @@
+name: Documentation Guard
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  docs-guard:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run documentation guard
+        run: |
+          python scripts/ci/check_docs_update.py \
+            --base "${{ github.event.pull_request.base.sha || 'HEAD~1' }}" \
+            --head "${{ github.event.pull_request.head.sha || 'HEAD' }}"
