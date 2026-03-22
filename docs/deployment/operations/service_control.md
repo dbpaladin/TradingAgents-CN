@@ -20,6 +20,45 @@ TradingAgents-CN 系统包含多个后台服务和定时任务，您可以通过
 python -m app
 ```
 
+### 3. 推荐的统一命令
+
+日常只需要记两条脚本：
+
+```bash
+# Docker 依赖服务（MongoDB / Redis）
+./scripts/docker_services.sh start
+
+# 应用服务（后端 + 前端）
+./scripts/app_services.sh start
+```
+
+对应的停止、重启、状态、日志也保持一致：
+
+```bash
+./scripts/docker_services.sh stop
+./scripts/docker_services.sh restart
+./scripts/docker_services.sh status
+./scripts/docker_services.sh logs
+
+./scripts/app_services.sh stop
+./scripts/app_services.sh restart
+./scripts/app_services.sh status
+./scripts/app_services.sh logs
+./scripts/app_services.sh logs backend
+./scripts/app_services.sh logs frontend
+```
+
+### 4. 说明
+
+- `./scripts/app_services.sh` 已经统一管理后端和前端，不需要再单独记后端脚本
+- `./scripts/docker_services.sh` 只管理 Docker 中的 MongoDB / Redis
+- 后端内部仍然使用守护方式启动，因此不会因为当前终端关闭而一起退出
+- 如需开发热重载，可临时使用：
+
+```bash
+BACKEND_RELOAD=1 ./scripts/app_services.sh restart
+```
+
 ## 🚀 可控制的服务类型
 
 ### 📊 基础服务
