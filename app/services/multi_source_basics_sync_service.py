@@ -164,7 +164,8 @@ class MultiSourceBasicsSyncService:
             # Step 1: 获取数据源管理器
             from app.services.data_sources.manager import DataSourceManager
             manager = DataSourceManager()
-            available_adapters = manager.get_available_adapters()
+            # 适配器可用性检查会触发同步网络探测，避免阻塞事件循环。
+            available_adapters = await asyncio.to_thread(manager.get_available_adapters)
 
             if not available_adapters:
                 raise RuntimeError("No available data sources found")

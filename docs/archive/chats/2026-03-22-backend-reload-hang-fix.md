@@ -33,6 +33,8 @@
 
 文件：
 - `app/main.py`
+- `app/services/multi_source_basics_sync_service.py`
+- `app/services/quotes_ingestion_service.py`
 
 核心修改：
 
@@ -44,6 +46,12 @@
    - `startup_stock_basics_sync`
 3. 在 shutdown 阶段主动取消仍在运行的启动任务，并限时等待退出。
 4. 为任务补充 `asyncio.CancelledError` 处理和更清晰的日志。
+
+后续补充修改：
+
+5. 将启动期与补数链路中的同步数据源调用迁移到 `asyncio.to_thread(...)`：
+   - 避免私有 Tushare endpoint 探测直接阻塞事件循环
+   - 避免后台任务把主服务端口监听和健康检查拖慢
 
 ## 关键结论
 
@@ -58,7 +66,7 @@
 已执行：
 
 ```bash
-python -m py_compile app/main.py
+python -m py_compile app/main.py app/services/multi_source_basics_sync_service.py app/services/quotes_ingestion_service.py
 ```
 
 ### 2. 可复现验证

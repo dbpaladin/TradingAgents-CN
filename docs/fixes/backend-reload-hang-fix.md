@@ -60,6 +60,28 @@
 - 热重载和手动重启时不再长时间卡在 `Waiting for background tasks to complete`。
 - 前端 `/api/health` 恢复稳定。
 
+## 后续补充修复
+
+在第一次修复后，又进一步发现启动期与休市补数逻辑里仍有一批同步数据源调用直接跑在事件循环中，典型包括：
+
+- `DataSourceManager.get_available_adapters()`
+- `DataSourceManager.find_latest_trade_date_with_fallback()`
+- `DataSourceManager.get_realtime_quotes_with_fallback()`
+- `QuotesIngestionService._check_tushare_permission()`
+- `QuotesIngestionService._fetch_quotes_from_source()`
+
+这些调用会触发 Tushare 私有 endpoint 探测或实时行情获取。如果它们直接运行在事件循环线程中，就会导致：
+
+- 后端虽然“进程已启动”，但端口迟迟不进入可服务状态
+- `/api/health` 在启动期或定时任务运行时出现明显卡顿
+
+因此又补了一轮线程化处理：
+
+- 在 `app/services/multi_source_basics_sync_service.py` 中，将适配器可用性检查放入 `asyncio.to_thread(...)`
+- 在 `app/services/quotes_ingestion_service.py` 中，将启动补数、权限探测、行情抓取、交易日查询等同步调用放入 `asyncio.to_thread(...)`
+
+这一轮修复解决的是“启动/定时任务阻塞主事件循环”的问题，与前一轮的“shutdown 时缺少任务取消”是同一故障链上的两个环节。
+
 ## 验证
 
 ### 语法校验
