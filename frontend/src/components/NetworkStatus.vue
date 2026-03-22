@@ -44,7 +44,7 @@ const retrying = ref(false)
 
 // 只在有网络问题时显示状态
 const showStatus = computed(() => {
-  return !appStore.isOnline || !appStore.apiConnected
+  return !appStore.isOnline || appStore.shouldShowApiDisconnected
 })
 
 // 重试连接
@@ -66,12 +66,12 @@ const retryConnection = async () => {
 let checkInterval: number | null = null
 
 onMounted(() => {
-  // 每30秒检查一次API连接状态
+  // 持续探测健康状态，避免瞬时抖动后长时间停留在错误提示
   checkInterval = window.setInterval(() => {
-    if (appStore.isOnline && !appStore.apiConnected) {
+    if (appStore.isOnline) {
       appStore.checkApiConnection()
     }
-  }, 30000)
+  }, 15000)
 })
 
 onUnmounted(() => {

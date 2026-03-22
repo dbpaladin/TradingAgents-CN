@@ -29,6 +29,13 @@ class ConfigService:
     def __init__(self, db_manager=None):
         self.db = None
         self.db_manager = db_manager
+        self._runtime_cache_ttl_seconds = 15.0
+        self._system_config_cache: Optional[SystemConfig] = None
+        self._system_config_cache_ts = 0.0
+        self._llm_providers_cache: Optional[List[LLMProvider]] = None
+        self._llm_providers_cache_ts = 0.0
+        self._system_config_lock = asyncio.Lock()
+        self._llm_providers_lock = asyncio.Lock()
 
     async def _get_db(self):
         """获取数据库连接"""
@@ -40,6 +47,37 @@ class ConfigService:
                 # 否则使用全局函数
                 self.db = get_mongo_db()
         return self.db
+
+    def _is_runtime_cache_valid(self, cache_ts: float) -> bool:
+        return cache_ts > 0 and (time.monotonic() - cache_ts) < self._runtime_cache_ttl_seconds
+
+    @staticmethod
+    def _clone_system_config(config: Optional[SystemConfig]) -> Optional[SystemConfig]:
+        if config is None:
+            return None
+        return config.model_copy(deep=True)
+
+    @staticmethod
+    def _clone_llm_providers(providers: Optional[List[LLMProvider]]) -> List[LLMProvider]:
+        if not providers:
+            return []
+        return [provider.model_copy(deep=True) for provider in providers]
+
+    def _set_system_config_cache(self, config: Optional[SystemConfig]) -> None:
+        self._system_config_cache = self._clone_system_config(config)
+        self._system_config_cache_ts = time.monotonic() if config is not None else 0.0
+
+    def _set_llm_providers_cache(self, providers: List[LLMProvider]) -> None:
+        self._llm_providers_cache = self._clone_llm_providers(providers)
+        self._llm_providers_cache_ts = time.monotonic() if providers is not None else 0.0
+
+    def invalidate_runtime_cache(self, scope: str = "all") -> None:
+        if scope in {"all", "system_config"}:
+            self._system_config_cache = None
+            self._system_config_cache_ts = 0.0
+        if scope in {"all", "llm_providers"}:
+            self._llm_providers_cache = None
+            self._llm_providers_cache_ts = 0.0
 
     # ==================== 市场分类管理 ====================
 
@@ -362,24 +400,34 @@ class ConfigService:
             return False
 
     async def get_system_config(self) -> Optional[SystemConfig]:
-        """获取系统配置 - 优先从数据库获取最新数据"""
+        """获取系统配置 - 优先返回短 TTL 缓存，过期后回源数据库"""
         try:
-            # 直接从数据库获取最新配置，避免缓存问题
-            db = await self._get_db()
-            config_collection = db.system_configs
+            if self._system_config_cache and self._is_runtime_cache_valid(self._system_config_cache_ts):
+                return self._clone_system_config(self._system_config_cache)
 
-            config_data = await config_collection.find_one(
-                {"is_active": True},
-                sort=[("version", -1)]
-            )
+            async with self._system_config_lock:
+                if self._system_config_cache and self._is_runtime_cache_valid(self._system_config_cache_ts):
+                    return self._clone_system_config(self._system_config_cache)
 
-            if config_data:
-                print(f"📊 从数据库获取配置，版本: {config_data.get('version', 0)}, LLM配置数量: {len(config_data.get('llm_configs', []))}")
-                return SystemConfig(**config_data)
+                db = await self._get_db()
+                config_collection = db.system_configs
 
-            # 如果没有配置，创建默认配置
-            print("⚠️ 数据库中没有配置，创建默认配置")
-            return await self._create_default_config()
+                config_data = await config_collection.find_one(
+                    {"is_active": True},
+                    sort=[("version", -1)]
+                )
+
+                if config_data:
+                    print(f"📊 从数据库获取配置，版本: {config_data.get('version', 0)}, LLM配置数量: {len(config_data.get('llm_configs', []))}")
+                    config = SystemConfig(**config_data)
+                    self._set_system_config_cache(config)
+                    return self._clone_system_config(config)
+
+                # 如果没有配置，创建默认配置
+                print("⚠️ 数据库中没有配置，创建默认配置")
+                config = await self._create_default_config()
+                self._set_system_config_cache(config)
+                return self._clone_system_config(config)
 
         except Exception as e:
             print(f"❌ 从数据库获取配置失败: {e}")
@@ -389,6 +437,7 @@ class ConfigService:
                 unified_system_config = await unified_config.get_unified_system_config()
                 if unified_system_config:
                     print("🔄 回退到统一配置管理器")
+                    self._set_system_config_cache(unified_system_config)
                     return unified_system_config
             except Exception as e2:
                 print(f"从统一配置获取也失败: {e2}")
@@ -559,6 +608,7 @@ class ConfigService:
             saved_config = await config_collection.find_one({"_id": insert_result.inserted_id})
             if saved_config:
                 print(f"✅ 配置保存成功，验证LLM配置数量: {len(saved_config.get('llm_configs', []))}")
+                self._set_system_config_cache(SystemConfig(**saved_config))
 
                 try:
                     unified_config.sync_to_legacy_format(config)
@@ -2774,46 +2824,54 @@ class ConfigService:
     async def get_llm_providers(self) -> List[LLMProvider]:
         """获取所有大模型厂家（合并环境变量配置）"""
         try:
-            db = await self._get_db()
-            providers_collection = db.llm_providers
+            if self._llm_providers_cache is not None and self._is_runtime_cache_valid(self._llm_providers_cache_ts):
+                return self._clone_llm_providers(self._llm_providers_cache)
 
-            providers_data = await providers_collection.find().to_list(length=None)
-            providers = []
+            async with self._llm_providers_lock:
+                if self._llm_providers_cache is not None and self._is_runtime_cache_valid(self._llm_providers_cache_ts):
+                    return self._clone_llm_providers(self._llm_providers_cache)
 
-            logger.info(f"🔍 [get_llm_providers] 从数据库获取到 {len(providers_data)} 个供应商")
+                db = await self._get_db()
+                providers_collection = db.llm_providers
 
-            for provider_data in providers_data:
-                provider = LLMProvider(**provider_data)
+                providers_data = await providers_collection.find().to_list(length=None)
+                providers = []
 
-                # 🔥 判断数据库中的 API Key 是否有效
-                db_key_valid = self._is_valid_api_key(provider.api_key)
-                logger.info(f"🔍 [get_llm_providers] 供应商 {provider.display_name} ({provider.name}): 数据库密钥有效={db_key_valid}")
+                logger.info(f"🔍 [get_llm_providers] 从数据库获取到 {len(providers_data)} 个供应商")
 
-                # 初始化 extra_config
-                provider.extra_config = provider.extra_config or {}
+                for provider_data in providers_data:
+                    provider = LLMProvider(**provider_data)
 
-                if not db_key_valid:
-                    # 数据库中的 Key 无效，尝试从环境变量获取
-                    logger.info(f"🔍 [get_llm_providers] 尝试从环境变量获取 {provider.name} 的 API 密钥...")
-                    env_key = self._get_env_api_key(provider.name)
-                    if env_key:
-                        provider.api_key = env_key
-                        provider.extra_config["source"] = "environment"
-                        provider.extra_config["has_api_key"] = True
-                        logger.info(f"✅ [get_llm_providers] 从环境变量为厂家 {provider.display_name} 获取API密钥")
+                    # 🔥 判断数据库中的 API Key 是否有效
+                    db_key_valid = self._is_valid_api_key(provider.api_key)
+                    logger.info(f"🔍 [get_llm_providers] 供应商 {provider.display_name} ({provider.name}): 数据库密钥有效={db_key_valid}")
+
+                    # 初始化 extra_config
+                    provider.extra_config = provider.extra_config or {}
+
+                    if not db_key_valid:
+                        # 数据库中的 Key 无效，尝试从环境变量获取
+                        logger.info(f"🔍 [get_llm_providers] 尝试从环境变量获取 {provider.name} 的 API 密钥...")
+                        env_key = self._get_env_api_key(provider.name)
+                        if env_key:
+                            provider.api_key = env_key
+                            provider.extra_config["source"] = "environment"
+                            provider.extra_config["has_api_key"] = True
+                            logger.info(f"✅ [get_llm_providers] 从环境变量为厂家 {provider.display_name} 获取API密钥")
+                        else:
+                            provider.extra_config["has_api_key"] = False
+                            logger.warning(f"⚠️ [get_llm_providers] 厂家 {provider.display_name} 的数据库配置和环境变量都未配置有效的API密钥")
                     else:
-                        provider.extra_config["has_api_key"] = False
-                        logger.warning(f"⚠️ [get_llm_providers] 厂家 {provider.display_name} 的数据库配置和环境变量都未配置有效的API密钥")
-                else:
-                    # 数据库中的 Key 有效，使用数据库配置
-                    provider.extra_config["source"] = "database"
-                    provider.extra_config["has_api_key"] = True
-                    logger.info(f"✅ [get_llm_providers] 使用数据库配置的 {provider.display_name} API密钥")
+                        # 数据库中的 Key 有效，使用数据库配置
+                        provider.extra_config["source"] = "database"
+                        provider.extra_config["has_api_key"] = True
+                        logger.info(f"✅ [get_llm_providers] 使用数据库配置的 {provider.display_name} API密钥")
 
-                providers.append(provider)
+                    providers.append(provider)
 
-            logger.info(f"🔍 [get_llm_providers] 返回 {len(providers)} 个供应商")
-            return providers
+                self._set_llm_providers_cache(providers)
+                logger.info(f"🔍 [get_llm_providers] 返回 {len(providers)} 个供应商")
+                return self._clone_llm_providers(providers)
         except Exception as e:
             logger.error(f"❌ [get_llm_providers] 获取厂家列表失败: {e}", exc_info=True)
             return []
@@ -2914,6 +2972,7 @@ class ConfigService:
                 del provider_data["_id"]
 
             result = await providers_collection.insert_one(provider_data)
+            self.invalidate_runtime_cache("llm_providers")
             return str(result.inserted_id)
         except Exception as e:
             print(f"添加厂家失败: {e}")
@@ -2952,7 +3011,10 @@ class ConfigService:
             # 修复：matched_count > 0 表示找到了记录（即使没有修改）
             # modified_count > 0 只有在实际修改了字段时才为真
             # 如果记录存在但值相同，modified_count 为 0，但这不应该返回 404
-            return result.matched_count > 0
+            success = result.matched_count > 0
+            if success:
+                self.invalidate_runtime_cache("llm_providers")
+            return success
         except Exception as e:
             print(f"更新厂家失败: {e}")
             import traceback
@@ -3001,6 +3063,8 @@ class ConfigService:
                 result = await providers_collection.delete_one({"_id": provider_id})
 
             success = result.deleted_count > 0
+            if success:
+                self.invalidate_runtime_cache("llm_providers")
 
             print(f"🗑️ 删除结果: {success}, deleted_count: {result.deleted_count}")
             return success
@@ -3038,7 +3102,10 @@ class ConfigService:
                     {"$set": {"is_active": is_active, "updated_at": now_tz()}}
                 )
 
-            return result.matched_count > 0
+            success = result.matched_count > 0
+            if success:
+                self.invalidate_runtime_cache("llm_providers")
+            return success
         except Exception as e:
             print(f"切换厂家状态失败: {e}")
             return False

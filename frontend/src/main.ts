@@ -99,7 +99,7 @@ const initApp = async () => {
     window.addEventListener('offline', () => {
       console.log('📱 网络已断开')
       appStore.setOnlineStatus(false)
-      appStore.setApiConnected(false)
+      appStore.markApiCheckFailure()
     })
 
     // 检查API连接状态

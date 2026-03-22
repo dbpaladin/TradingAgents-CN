@@ -31,6 +31,8 @@ import NetworkStatus from '@/components/NetworkStatus.vue'
 import axios from 'axios'
 import { configApi } from '@/api/config'
 
+const CONFIG_VALIDATE_SESSION_KEY = 'config_validate_checked'
+
 // 需要缓存的组件
 const keepAliveComponents = computed(() => [
   'Dashboard',
@@ -50,10 +52,18 @@ const checkFirstTimeSetup = async () => {
       return
     }
 
+    // 当前会话已经校验过时，不再重复触发首屏配置校验
+    if (sessionStorage.getItem(CONFIG_VALIDATE_SESSION_KEY) === 'true') {
+      return
+    }
+
     // 验证配置完整性
-    const response = await axios.get('/api/system/config/validate')
+    const response = await axios.get('/api/system/config/validate', {
+      timeout: 5000
+    })
     if (response.data.success) {
       const result = response.data.data
+      sessionStorage.setItem(CONFIG_VALIDATE_SESSION_KEY, 'true')
 
       // 如果有缺少的必需配置，显示配置向导
       if (!result.success && result.missing_required?.length > 0) {
@@ -155,6 +165,7 @@ const handleWizardComplete = async (data: any) => {
 
     // 标记配置向导已完成
     localStorage.setItem('config_wizard_completed', 'true')
+    sessionStorage.setItem(CONFIG_VALIDATE_SESSION_KEY, 'true')
 
     ElMessage.success({
       message: '配置完成！欢迎使用 TradingAgents-CN',

@@ -69,7 +69,13 @@ start_backend() {
   print_info "Starting backend on ${BACKEND_HOST}:${BACKEND_PORT}"
   (
     cd "$ROOT_DIR"
-    nohup setsid env PYTHONPATH="$ROOT_DIR" "${cmd[@]}" >"$LOG_FILE" 2>&1 < /dev/null &
+    nohup setsid env \
+      PYTHONPATH="$ROOT_DIR" \
+      HOST="$BACKEND_HOST" \
+      PORT="$BACKEND_PORT" \
+      API_HOST="$BACKEND_HOST" \
+      API_PORT="$BACKEND_PORT" \
+      "${cmd[@]}" >"$LOG_FILE" 2>&1 < /dev/null &
     echo $! > "$PID_FILE"
   )
 

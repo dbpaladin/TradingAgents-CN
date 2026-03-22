@@ -13,6 +13,8 @@ export interface AppState {
   isOnline: boolean
   apiConnected: boolean
   lastApiCheck: number
+  apiFailureCount: number
+  apiStatusInitialized: boolean
 
   // 布局状态
   sidebarCollapsed: boolean
@@ -46,6 +48,8 @@ export const useAppStore = defineStore('app', {
     isOnline: navigator.onLine,
     apiConnected: false,
     lastApiCheck: 0,
+    apiFailureCount: 0,
+    apiStatusInitialized: false,
 
     sidebarCollapsed: useStorage('sidebar-collapsed', false).value || false,
     sidebarWidth: useStorage('sidebar-width', 240).value || 240,
@@ -99,6 +103,10 @@ export const useAppStore = defineStore('app', {
         theme: this.theme,
         language: this.language
       }
+    },
+
+    shouldShowApiDisconnected(): boolean {
+      return this.apiStatusInitialized && !this.apiConnected && this.apiFailureCount >= 2
     }
   },
 
@@ -201,6 +209,21 @@ export const useAppStore = defineStore('app', {
     setApiConnected(connected: boolean) {
       this.apiConnected = connected
       this.lastApiCheck = Date.now()
+      this.apiStatusInitialized = true
+      if (connected) {
+        this.apiFailureCount = 0
+      }
+    },
+
+    markApiCheckFailure() {
+      this.lastApiCheck = Date.now()
+      this.apiStatusInitialized = true
+      this.apiFailureCount += 1
+
+      // 短暂波动时保留当前连接状态，连续失败再判定后端不可达
+      if (this.apiFailureCount >= 2) {
+        this.apiConnected = false
+      }
     },
 
     // 检查API连接状态
@@ -208,16 +231,21 @@ export const useAppStore = defineStore('app', {
       try {
         // 使用 AbortController 实现超时
         const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 3000) // 3秒超时
+        const timeoutId = setTimeout(() => controller.abort(), 5000) // 5秒超时
 
-        const response = await fetch('/api/health', {
+        const response = await fetch(`/api/health?_t=${Date.now()}`, {
           method: 'GET',
-          signal: controller.signal
+          signal: controller.signal,
+          cache: 'no-store'
         })
 
         clearTimeout(timeoutId)
         const connected = response.ok
-        this.setApiConnected(connected)
+        if (connected) {
+          this.setApiConnected(true)
+        } else {
+          this.markApiCheckFailure()
+        }
         return connected
       } catch (error) {
         if (error.name === 'AbortError') {
@@ -225,7 +253,7 @@ export const useAppStore = defineStore('app', {
         } else {
           console.warn('API连接检查失败:', error)
         }
-        this.setApiConnected(false)
+        this.markApiCheckFailure()
         return false
       }
     },
@@ -235,10 +263,11 @@ export const useAppStore = defineStore('app', {
       try {
         // 使用 AbortController 实现超时
         const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 3000) // 3秒超时
+        const timeoutId = setTimeout(() => controller.abort(), 5000) // 5秒超时
 
-        const response = await fetch('/api/health', {
-          signal: controller.signal
+        const response = await fetch(`/api/health?_t=${Date.now()}`, {
+          signal: controller.signal,
+          cache: 'no-store'
         })
 
         clearTimeout(timeoutId)
@@ -248,7 +277,7 @@ export const useAppStore = defineStore('app', {
           this.apiVersion = data.version || 'unknown'
           this.setApiConnected(true)
         } else {
-          this.setApiConnected(false)
+          this.markApiCheckFailure()
         }
       } catch (error) {
         if (error.name === 'AbortError') {
@@ -257,7 +286,7 @@ export const useAppStore = defineStore('app', {
           console.warn('获取API版本失败:', error)
         }
         this.apiVersion = 'unknown'
-        this.setApiConnected(false)
+        this.markApiCheckFailure()
       }
     },
     
