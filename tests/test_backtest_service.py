@@ -368,6 +368,51 @@ class TestBacktestModelRouting:
         assert engine._ai_disabled_reason is not None
         assert "API Key 缺失" in engine._ai_disabled_reason
 
+    def test_compute_analysis_timeout_expands_for_multi_analyst_backtest(self):
+        from app.services.backtest_service import BacktestEngine
+
+        task = make_test_task()
+        task.config.selected_analysts = [
+            "market",
+            "fundamentals",
+            "news",
+            "social",
+            "emotion",
+            "fund_flow",
+            "theme_rotation",
+            "institutional_theme",
+        ]
+        task.config.research_depth = "快速"
+        engine = BacktestEngine(task)
+        engine._analysis_runtime = {
+            "quick_timeout": 180,
+            "deep_timeout": 180,
+        }
+
+        assert engine._compute_analysis_timeout_seconds() == 1005
+
+    def test_compute_analysis_timeout_counts_sentiment_expansion(self):
+        from app.services.backtest_service import BacktestEngine
+
+        task = make_test_task()
+        task.config.selected_analysts = [
+            "market",
+            "fundamentals",
+            "sentiment",
+            "fund_flow",
+            "news",
+            "institutional_theme",
+            "theme_rotation",
+        ]
+        task.config.research_depth = "快速"
+        engine = BacktestEngine(task)
+        engine._analysis_runtime = {
+            "quick_timeout": 180,
+            "deep_timeout": 180,
+        }
+
+        assert engine._compute_analysis_timeout_seconds() == 1005
+
     @pytest.mark.asyncio
     async def test_run_ai_analysis_reuses_graph_in_fast_mode(self):
         from app.services.backtest_service import BacktestEngine
