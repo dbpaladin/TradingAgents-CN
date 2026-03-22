@@ -213,7 +213,7 @@ class TradingAgentsGraph:
         expanded_analysts = []
         for analyst in selected_analysts:
             if analyst == "sentiment":
-                expanded_analysts.extend(["social", "emotion", "fund_flow", "theme_rotation"])
+                expanded_analysts.extend(["social", "emotion", "fund_flow", "theme_rotation", "institutional_theme"])
             else:
                 expanded_analysts.append(analyst)
 
