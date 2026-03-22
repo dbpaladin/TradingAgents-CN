@@ -67,10 +67,13 @@
 
 ### 方法1: 启动Web应用
 ```bash
-# 启动Web界面
-python start_web.py
+# 启动依赖服务
+./scripts/docker_services.sh start
 
-# 访问 http://localhost:8501
+# 启动应用服务
+./scripts/app_services.sh start
+
+# 访问 http://localhost:3000
 # 进行股票分析并截图
 ```
 

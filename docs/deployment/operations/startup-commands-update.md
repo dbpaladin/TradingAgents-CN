@@ -1,5 +1,7 @@
 # 📋 启动命令更新说明
 
+> 注意：本文记录的是早期 Streamlit Web 启动方式的历史说明。当前源码模式的统一入口已切换为 `./scripts/app_services.sh` 和 `./scripts/docker_services.sh`，`scripts/startup/` 下旧的 `start_*` 入口脚本已移除。
+
 ## 🎯 更新概述
 
 为了解决Web应用启动时的模块导入问题，我们更新了所有相关文档和脚本中的启动命令。

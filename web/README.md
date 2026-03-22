@@ -45,26 +45,16 @@ cp .env.example .env
 ### 2. 启动Web界面
 
 ```bash
-# 方法1: 使用简化启动脚本（推荐）
-python start_web.py
+# 启动依赖服务（MongoDB / Redis）
+./scripts/docker_services.sh start
 
-# 方法2: 使用项目启动脚本
-python web/run_web.py
-
-# 方法3: 使用快捷脚本
-# Windows
-start_web.bat
-
-# Linux/macOS
-./start_web.sh
-
-# 方法4: 直接启动（需要先安装项目）
-python -m streamlit run web/app.py
+# 启动应用服务（后端 + 前端）
+./scripts/app_services.sh start
 ```
 
 ### 3. 访问界面
 
-在浏览器中打开 `http://localhost:8501`
+在浏览器中打开 `http://localhost:3000`
 
 ## 📋 使用指南
 

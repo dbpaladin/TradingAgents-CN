@@ -34,7 +34,7 @@ def check_web_service():
     """检查Web服务是否运行"""
     try:
         import requests
-        response = requests.get("http://localhost:8501", timeout=5)
+        response = requests.get("http://localhost:3000", timeout=5)
         if response.status_code == 200:
             logger.info("✅ Web服务正在运行")
             return True
@@ -63,10 +63,11 @@ def start_web_service():
     # 尝试本地启动
     logger.info("💻 尝试本地启动Web服务...")
     try:
-        # 启动Web服务（后台运行）
-        subprocess.Popen([
-            sys.executable, "start_web.py"
-        ], cwd=project_root)
+        # 启动当前统一入口（后台运行）
+        subprocess.Popen(
+            ["bash", "./scripts/app_services.sh", "start"],
+            cwd=project_root,
+        )
         
         # 等待服务启动
         for i in range(30):
@@ -112,7 +113,7 @@ def capture_screenshots():
         try:
             # 访问Web界面
             logger.info("🌐 正在访问Web界面...")
-            driver.get("http://localhost:8501")
+            driver.get("http://localhost:3000")
             
             # 等待页面加载
             WebDriverWait(driver, 30).until(
@@ -186,14 +187,14 @@ python scripts/capture_web_screenshots.py
 ### 1. 启动Web服务
 ```bash
 # 方法1: 本地启动
-python start_web.py
+./scripts/app_services.sh start
 
 # 方法2: Docker启动  
 docker-compose up -d
 ```
 
 ### 2. 访问界面
-打开浏览器访问: http://localhost:8501
+打开浏览器访问: http://localhost:3000
 
 ### 3. 捕获截图
 按照以下场景进行截图:

@@ -352,33 +352,21 @@ docker exec -it mongodb mongosh
 
 ### 1. 启动Web应用
 
-#### 方法1: 使用启动脚本 (推荐)
+#### 方法1: 使用统一服务脚本 (推荐)
 ```bash
 # 确保虚拟环境已激活
 # Windows: .venv\Scripts\activate
 # macOS/Linux: source .venv/bin/activate
 
-# 启动Web应用
-python start_web.py
-```
+# 启动依赖服务
+./scripts/docker_services.sh start
 
-#### 方法2: 直接启动Streamlit
-```bash
-# 进入web目录
-cd web
-
-# 启动Streamlit应用
-streamlit run app.py --server.port 8501
-```
-
-#### 方法3: 使用批处理文件 (Windows)
-```bash
-# 双击运行
-start_web.bat
+# 启动应用服务
+./scripts/app_services.sh start
 ```
 
 ### 2. 访问应用
-打开浏览器访问: http://localhost:8501
+打开浏览器访问: http://localhost:3000
 
 ### 3. 首次使用配置
 

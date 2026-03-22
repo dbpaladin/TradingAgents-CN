@@ -28,15 +28,15 @@ python examples/test_installation.py
 
 ### 2. 启动应用
 ```bash
-# 启动Web应用
-python start_web.py
+# 启动依赖服务
+./scripts/docker_services.sh start
 
-# 或直接使用streamlit
-cd web && streamlit run app.py
+# 启动应用服务
+./scripts/app_services.sh start
 ```
 
 ### 3. 访问界面
-打开浏览器访问: http://localhost:8501
+打开浏览器访问: http://localhost:3000
 
 ### 4. 首次配置
 

@@ -336,16 +336,8 @@ function Start-Application {
     Write-ColorOutput "  🎉 安装完成！应用正在启动..." "Green"
     Write-ColorOutput "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" "Green"
     Write-Host ""
-    Write-Info "按 Ctrl+C 停止应用"
-    Write-Host ""
-    
-    try {
-        python start_web.py
-    }
-    catch {
-        Write-Error "应用启动失败: $_"
-        Write-Info "请尝试手动启动: python start_web.py"
-    }
+    Write-Info "统一入口已切换，请按当前部署文档手动启动应用服务"
+    Write-Info "当前推荐入口: scripts/app_services.sh 与 scripts/docker_services.sh"
 }
 
 # 主函数
@@ -385,4 +377,3 @@ function Main {
 
 # 运行主函数
 Main
-

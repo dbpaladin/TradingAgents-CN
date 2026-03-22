@@ -50,8 +50,7 @@ $syncDirs = @(
 $syncFiles = @(
     "requirements.txt",
     "README.md",
-    ".env.example",
-    "start_api.py"
+    ".env.example"
 )
 
 $excludePatterns = @(

@@ -288,9 +288,10 @@ def main():
     if mongodb_success and redis_success:
         logger.info(f"\n🎉 数据库初始化完成！")
         logger.info(f"\n💡 下一步:")
-        logger.info(f"1. 启动Web应用: python start_web.py")
-        logger.info(f"2. 访问缓存管理: http://localhost:8501 -> 缓存管理")
-        logger.info(f"3. 访问Redis管理界面: http://localhost:8081")
+        logger.info(f"1. 启动依赖服务: ./scripts/docker_services.sh start")
+        logger.info(f"2. 启动应用服务: ./scripts/app_services.sh start")
+        logger.info(f"3. 访问前端: http://localhost:3000")
+        logger.info(f"4. 访问Redis管理界面: http://localhost:8081")
         return True
     else:
         logger.error(f"\n⚠️ 部分初始化失败，请检查错误信息")

@@ -288,10 +288,9 @@ start_application() {
     echo -e "${GREEN}  🎉 安装完成！应用正在启动...${NC}"
     echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
-    print_info "按 Ctrl+C 停止应用"
-    echo ""
-    
-    python start_web.py
+    print_info "统一入口已切换，请手动启动当前应用服务："
+    print_info "  ./scripts/docker_services.sh start"
+    print_info "  ./scripts/app_services.sh start"
 }
 
 # 主函数
@@ -324,4 +323,3 @@ main() {
 
 # 运行主函数
 main "$@"
-

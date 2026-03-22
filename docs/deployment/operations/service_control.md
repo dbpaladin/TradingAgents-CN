@@ -59,6 +59,16 @@ python -m app
 BACKEND_RELOAD=1 ./scripts/app_services.sh restart
 ```
 
+### 5. 已移除的旧入口脚本
+
+为避免混淆，`scripts/startup/` 中历史遗留的 `start_*` 入口脚本已移除。
+
+- 应用统一入口：`./scripts/app_services.sh`
+- Docker 依赖入口：`./scripts/docker_services.sh`
+- 如需单独操作后端，可使用：`./scripts/backend_service.sh`
+
+不要再使用旧的 `start_backend.py`、`start_web.py`、`start_simple.sh` 等历史脚本名。
+
 ## 🚀 可控制的服务类型
 
 ## 🌐 当前启动拓扑

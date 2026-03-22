@@ -98,7 +98,8 @@ cp .env.example .env
 # macOS/Linux: nano .env
 
 # 8. 启动应用
-python start_web.py
+./scripts/docker_services.sh start
+./scripts/app_services.sh start
 ```
 
 ## 🐳 Docker安装（推荐）
@@ -330,12 +331,11 @@ sudo apt install redis-server
 # Windows: env\Scripts\activate
 # macOS/Linux: source env/bin/activate
 
-# 启动Streamlit应用
-python -m streamlit run web/app.py
+# 启动依赖服务
+./scripts/docker_services.sh start
 
-# 或使用启动脚本
-# Windows: start_web.bat
-# macOS/Linux: ./start_web.sh
+# 启动应用服务
+./scripts/app_services.sh start
 ```
 
 ## ⚙️ 环境配置
@@ -708,8 +708,9 @@ docker-compose up -d redis
 
 #### Linux/macOS权限
 ```bash
-# 给脚本执行权限
-chmod +x start_web.sh
+# 给统一服务脚本执行权限
+chmod +x scripts/docker_services.sh
+chmod +x scripts/app_services.sh
 
 # 修复文件所有权
 sudo chown -R $USER:$USER .

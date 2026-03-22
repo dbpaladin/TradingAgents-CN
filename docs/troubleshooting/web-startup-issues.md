@@ -1,5 +1,7 @@
 # 🔧 Web应用启动问题排除指南
 
+> 注意：本文中的旧版 Streamlit 启动方式仅供历史排查参考。当前源码模式统一入口为 `./scripts/docker_services.sh` 和 `./scripts/app_services.sh`，访问地址为 `http://localhost:3000`。
+
 ## 🚨 常见问题
 
 ### 1. ModuleNotFoundError: No module named 'tradingagents'

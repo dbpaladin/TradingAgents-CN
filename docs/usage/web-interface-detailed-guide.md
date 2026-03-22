@@ -37,8 +37,11 @@ source env/bin/activate  # Linux/Mac
 # 或
 .\env\Scripts\activate   # Windows
 
-# 启动Web界面
-python start_web.py
+# 启动依赖服务
+./scripts/docker_services.sh start
+
+# 启动应用服务
+./scripts/app_services.sh start
 ```
 
 #### 方法二: Docker启动
@@ -51,7 +54,7 @@ docker-compose ps
 ```
 
 ### 2️⃣ 访问界面
-- 打开浏览器访问: `http://localhost:8501`
+- 打开浏览器访问: `http://localhost:3000`
 - 等待界面加载完成（约3-5秒）
 
 ## 📋 主要功能区域

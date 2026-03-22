@@ -125,7 +125,7 @@ REDIS_ENABLED=false
 
 **启动**：
 ```bash
-python start_web.py
+./scripts/app_services.sh start
 ```
 
 ### 模式2：标准模式（推荐有Docker用户）
@@ -138,7 +138,8 @@ python start_web.py
 
 **启动**：
 ```bash
-docker-compose up -d
+./scripts/docker_services.sh start
+./scripts/app_services.sh start
 ```
 
 ### 模式3：专业模式（开发者）
@@ -151,14 +152,11 @@ docker-compose up -d
 
 **启动**：
 ```bash
-# 后端
-python start_backend.py
+# 依赖服务
+./scripts/docker_services.sh start
 
-# 前端
-python start_frontend.py
-
-# Web
-python start_web.py
+# 应用服务
+./scripts/app_services.sh start
 ```
 
 ## 📦 一键安装脚本功能
@@ -211,14 +209,8 @@ python start_web.py
 ### 日常使用
 
 ```bash
-# Windows
-.\start_web.bat
-
-# Linux/Mac
-./start_web.sh
-
-# 或使用Python脚本
-python start_web.py
+./scripts/docker_services.sh start
+./scripts/app_services.sh start
 ```
 
 ## 🔍 故障排除
@@ -346,4 +338,3 @@ python scripts/prefetch_stock_data.py 000001 600519 AAPL
 ---
 
 **🎉 祝您使用愉快！**
-

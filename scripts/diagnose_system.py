@@ -259,7 +259,8 @@ def main():
     if passed == total:
         print_success("系统环境完全正常，可以开始使用！")
         print_info("运行以下命令启动应用:")
-        print_info("  python start_web.py")
+        print_info("  ./scripts/docker_services.sh start")
+        print_info("  ./scripts/app_services.sh start")
     elif passed >= total * 0.7:
         print_warning("系统环境基本正常，但有一些问题需要注意")
         print_info("建议修复上述问题以获得最佳体验")
@@ -281,4 +282,3 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
         sys.exit(1)
-

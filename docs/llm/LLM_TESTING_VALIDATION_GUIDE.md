@@ -459,7 +459,8 @@ if __name__ == "__main__":
 
 1. **启动 Web 应用**
    ```bash
-   python start_web.py
+   ./scripts/docker_services.sh start
+   ./scripts/app_services.sh start
    ```
 
 2. **检查模型选择器**
