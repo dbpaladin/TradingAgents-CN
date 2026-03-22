@@ -21,7 +21,7 @@ import uvicorn
 import logging
 import time
 from datetime import datetime
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 import asyncio
 from pathlib import Path
 
@@ -81,6 +81,62 @@ def get_version() -> str:
     except Exception:
         pass
     return "1.0.0"  # 默认版本号
+
+
+def _create_managed_startup_task(
+    coro,
+    *,
+    name: str,
+    logger: logging.Logger,
+    managed_tasks: set[asyncio.Task],
+) -> asyncio.Task:
+    """创建可管理的启动后台任务，便于在热重载/关闭时统一取消。"""
+    task = asyncio.create_task(coro, name=name)
+    managed_tasks.add(task)
+
+    def _on_done(done_task: asyncio.Task) -> None:
+        managed_tasks.discard(done_task)
+        if done_task.cancelled():
+            logger.info(f"🛑 启动后台任务已取消: {name}")
+            return
+
+        with suppress(Exception):
+            exc = done_task.exception()
+            if exc is not None:
+                logger.warning(f"⚠️ 启动后台任务异常退出 {name}: {exc}")
+
+    task.add_done_callback(_on_done)
+    logger.info(f"🚀 已启动后台任务: {name}")
+    return task
+
+
+async def _cancel_managed_startup_tasks(
+    managed_tasks: set[asyncio.Task],
+    logger: logging.Logger,
+    timeout_seconds: float = 3.0,
+) -> None:
+    """在应用关闭时取消启动阶段创建的后台任务，避免 reload 卡死。"""
+    pending_tasks = [task for task in managed_tasks if not task.done()]
+    if not pending_tasks:
+        return
+
+    logger.info(f"🧹 开始取消 {len(pending_tasks)} 个启动后台任务")
+    for task in pending_tasks:
+        task.cancel()
+
+    done, still_pending = await asyncio.wait(pending_tasks, timeout=timeout_seconds)
+
+    for task in done:
+        with suppress(asyncio.CancelledError, Exception):
+            task.result()
+
+    if still_pending:
+        logger.warning(
+            f"⚠️ 仍有 {len(still_pending)} 个启动后台任务未在 {timeout_seconds}s 内退出，"
+            "将继续关闭应用"
+        )
+
+    managed_tasks.clear()
 
 
 async def _print_config_summary(logger):
@@ -219,6 +275,7 @@ async def lifespan(app: FastAPI):
     # 启动时初始化
     setup_logging()
     logger = logging.getLogger("app.main")
+    managed_startup_tasks: set[asyncio.Task] = set()
 
     # 验证启动配置
     try:
@@ -265,11 +322,23 @@ async def lifespan(app: FastAPI):
             try:
                 qi = QuotesIngestionService()
                 await qi.ensure_indexes()
+            except asyncio.CancelledError:
+                logger.info("🛑 启动期行情回填任务收到取消信号")
+                raise
+            try:
                 await qi.backfill_last_close_snapshot_if_needed()
+            except asyncio.CancelledError:
+                logger.info("🛑 启动期行情回填任务在执行中被取消")
+                raise
             except Exception as e:
                 logger.warning(f"Startup backfill failed (ignored): {e}")
-        
-        asyncio.create_task(run_backfill())
+
+        _create_managed_startup_task(
+            run_backfill(),
+            name="startup_quotes_backfill",
+            logger=logger,
+            managed_tasks=managed_startup_tasks,
+        )
 
 
     # 启动每日定时任务：可配置
@@ -299,9 +368,23 @@ async def lifespan(app: FastAPI):
 
         # 立即在启动后尝试一次（不阻塞）
         async def run_sync_with_sources():
-            await multi_source_service.run_full_sync(force=False, preferred_sources=preferred_sources)
+            try:
+                await multi_source_service.run_full_sync(
+                    force=False,
+                    preferred_sources=preferred_sources,
+                )
+            except asyncio.CancelledError:
+                logger.info("🛑 启动期股票基础信息同步任务收到取消信号")
+                raise
+            except Exception as e:
+                logger.warning(f"Startup basics sync failed (ignored): {e}")
 
-        asyncio.create_task(run_sync_with_sources())
+        _create_managed_startup_task(
+            run_sync_with_sources(),
+            name="startup_stock_basics_sync",
+            logger=logger,
+            managed_tasks=managed_startup_tasks,
+        )
 
         # 配置调度：优先使用 CRON，其次使用 HH:MM
         if settings.SYNC_STOCK_BASICS_ENABLED:
@@ -587,6 +670,8 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         # 关闭时清理
+        await _cancel_managed_startup_tasks(managed_startup_tasks, logger)
+
         if scheduler:
             try:
                 scheduler.shutdown(wait=False)
