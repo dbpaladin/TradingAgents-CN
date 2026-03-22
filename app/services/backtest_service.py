@@ -61,6 +61,10 @@ class BacktestEngine:
     RISK_FREE_RATE = 0.03
     # 基准指数：上证综指
     BENCHMARK_CODE = "000001"
+    # 单次 AI 分析硬超时（秒）：防止某个交易日无限卡住
+    MIN_ANALYSIS_TIMEOUT_SECONDS = 120
+    MAX_ANALYSIS_TIMEOUT_SECONDS = 480
+    MAX_CONSECUTIVE_TIMEOUTS_BEFORE_DISABLE = 2
 
     def __init__(self, task: BacktestTask, progress_callback=None):
         self.task = task
@@ -74,6 +78,8 @@ class BacktestEngine:
         self._reusable_trading_graph = None
         self._stock_price_cache: Dict[str, float] = {}
         self._benchmark_price_cache: Dict[str, float] = {}
+        self._ai_disabled_reason: Optional[str] = None
+        self._consecutive_analysis_timeouts = 0
 
         # 账户状态
         self.cash = self.config.initial_capital
@@ -94,6 +100,53 @@ class BacktestEngine:
     async def close(self):
         """释放回测过程中持有的资源"""
         self._executor.shutdown(wait=False, cancel_futures=False)
+
+    def _provider_requires_api_key(self, provider: Optional[str]) -> bool:
+        """判断供应商是否要求 API Key（本地模型可豁免）"""
+        provider_name = (provider or "").strip().lower()
+        if not provider_name:
+            return True
+        # 本地部署模型通常不需要云端 API Key
+        if provider_name in {"ollama", "local", "localhost"}:
+            return False
+        return True
+
+    def _build_ai_disabled_reason(self, runtime: Dict[str, Any]) -> Optional[str]:
+        """根据运行时配置判断是否应禁用 AI 分析（避免长时间无效重试）"""
+        missing = []
+        quick_provider = runtime.get("quick_provider")
+        deep_provider = runtime.get("deep_provider")
+        quick_api_key = runtime.get("quick_api_key")
+        deep_api_key = runtime.get("deep_api_key")
+
+        if self._provider_requires_api_key(quick_provider) and not quick_api_key:
+            missing.append(f"quick={quick_provider}")
+        if self._provider_requires_api_key(deep_provider) and not deep_api_key:
+            missing.append(f"deep={deep_provider}")
+
+        if not missing:
+            return None
+        return "回测检测到模型 API Key 缺失（" + ", ".join(missing) + "），已自动降级为仅持有(HOLD)以避免长时间卡住"
+
+    def _compute_analysis_timeout_seconds(self) -> int:
+        """计算单次分析的硬超时，兼顾模型配置与全链路开销"""
+        runtime = self._analysis_runtime or {}
+        quick_timeout = int(runtime.get("quick_timeout") or 180)
+        deep_timeout = int(runtime.get("deep_timeout") or 180)
+        # 图内包含多节点调用，给到模型级超时的倍数预算
+        raw_timeout = max(quick_timeout, deep_timeout) * 3
+        return max(self.MIN_ANALYSIS_TIMEOUT_SECONDS, min(self.MAX_ANALYSIS_TIMEOUT_SECONDS, raw_timeout))
+
+    def _refresh_executor_after_timeout(self):
+        """单次分析超时后重建线程池，避免被卡死线程长期占用"""
+        old_executor = self._executor
+        self._executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix=f"backtest-{self.task.task_id[:8]}"
+        )
+        old_executor.shutdown(wait=False, cancel_futures=True)
+        # 复用图可能带有脏状态，超时后强制重建
+        self._reusable_trading_graph = None
 
     async def _update_progress(self, progress: int, current_date: str, message: str):
         """更新进度"""
@@ -512,10 +565,17 @@ class BacktestEngine:
             "deep_model": deep_model,
             "quick_provider": quick_provider,
             "deep_provider": deep_provider,
+            "quick_api_key": quick_provider_info.get("api_key"),
+            "deep_api_key": deep_provider_info.get("api_key"),
+            "quick_timeout": (quick_model_config or {}).get("timeout", 180),
+            "deep_timeout": (deep_model_config or {}).get("timeout", 180),
             "config": config,
             # 仅在禁用记忆时复用图实例，避免跨日状态污染。
             "reuse_graph": not config.get("memory_enabled", True),
         }
+        self._ai_disabled_reason = self._build_ai_disabled_reason(self._analysis_runtime)
+        if self._ai_disabled_reason:
+            logger.warning("⚠️ [回测降级] %s", self._ai_disabled_reason)
 
         logger.info(
             "🔍 [回测模型路由] quick=%s(%s), deep=%s(%s), reuse_graph=%s",
@@ -550,16 +610,28 @@ class BacktestEngine:
     async def _run_ai_analysis(self, symbol: str, date_str: str) -> Dict:
         """调用 TradingAgentsGraph 执行 AI 分析"""
         try:
+            if self._ai_disabled_reason:
+                return {
+                    "action": "HOLD",
+                    "confidence": 0.0,
+                    "reasoning": self._ai_disabled_reason
+                }
+
             trading_graph = self._get_trading_graph()
 
             # 在线程池中执行同步分析，避免每个交易日重复创建线程池。
             loop = asyncio.get_running_loop()
-            result_tuple = await loop.run_in_executor(
-                self._executor,
-                trading_graph.propagate,
-                _normalize_symbol(symbol),
-                date_str
+            analysis_timeout = self._compute_analysis_timeout_seconds()
+            result_tuple = await asyncio.wait_for(
+                loop.run_in_executor(
+                    self._executor,
+                    trading_graph.propagate,
+                    _normalize_symbol(symbol),
+                    date_str
+                ),
+                timeout=analysis_timeout
             )
+            self._consecutive_analysis_timeouts = 0
 
             # propagate 返回 (final_state, decision) 元组
             if isinstance(result_tuple, tuple) and len(result_tuple) == 2:
@@ -573,6 +645,22 @@ class BacktestEngine:
             else:
                 logger.warning(f"⚠️ AI分析返回空决策 [{symbol} {date_str}]: {decision}")
                 return {}
+        except asyncio.TimeoutError:
+            self._consecutive_analysis_timeouts += 1
+            timeout_reason = (
+                f"AI分析超时({self._compute_analysis_timeout_seconds()}s)"
+                f" [连续超时 {self._consecutive_analysis_timeouts}]"
+            )
+            logger.error("❌ %s [%s %s]，将重建线程池后继续", timeout_reason, symbol, date_str)
+            self._refresh_executor_after_timeout()
+            if self._consecutive_analysis_timeouts >= self.MAX_CONSECUTIVE_TIMEOUTS_BEFORE_DISABLE:
+                self._ai_disabled_reason = (
+                    f"AI分析连续超时达到{self.MAX_CONSECUTIVE_TIMEOUTS_BEFORE_DISABLE}次，"
+                    "后续日期已自动降级为 HOLD 以保证回测可完成"
+                )
+                logger.error("🛑 [回测降级] %s", self._ai_disabled_reason)
+                return {"action": "HOLD", "confidence": 0.0, "reasoning": self._ai_disabled_reason}
+            return {"action": "HOLD", "confidence": 0.0, "reasoning": timeout_reason}
         except Exception as e:
             import traceback
             error_msg = f"{type(e).__name__}: {str(e)[:100]}"
@@ -598,6 +686,10 @@ class BacktestEngine:
         # 1b. 批量预热整段行情，减少逐日 I/O 往返
         await self._update_progress(4, trading_days[0], "📦 预加载历史行情...")
         await self._warmup_market_data(trading_days)
+
+        # 1c. 提前初始化分析运行时，尽早触发模型配置校验
+        await self._update_progress(5, trading_days[0], "🤖 初始化AI分析引擎...")
+        self._get_analysis_runtime()
 
         # 2. 获取基准起始价格（用于计算基准收益率）
         benchmark_start_price: Optional[float] = None

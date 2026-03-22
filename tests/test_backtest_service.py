@@ -297,8 +297,10 @@ class TestBacktestModelRouting:
                 return {}, {"action": "BUY", "confidence": 0.9}
 
         class FakeLoop:
-            async def run_in_executor(self, executor, func, *args):
-                return func(*args)
+            def run_in_executor(self, executor, func, *args):
+                fut = asyncio.Future()
+                fut.set_result(func(*args))
+                return fut
 
         with patch("app.core.unified_config.unified_config", fake_unified_config), \
              patch("app.services.simple_analysis_service.create_analysis_config", side_effect=fake_create_analysis_config), \
@@ -330,6 +332,42 @@ class TestBacktestModelRouting:
         assert captured["graph_config"]["deep_backend_url"] == "https://api.openai.com/v1"
         assert captured["graph_config"]["backend_url"] == "https://api.openai.com/v1"
 
+    def test_get_analysis_runtime_disables_ai_when_required_api_key_missing(self):
+        from app.services.backtest_service import BacktestEngine
+
+        task = make_test_task()
+        task.config.quick_analysis_model = "qwen-turbo"
+        task.config.deep_analysis_model = "qwen-max"
+        engine = BacktestEngine(task)
+
+        fake_unified_config = SimpleNamespace(
+            get_quick_analysis_model=lambda: "qwen-turbo",
+            get_deep_analysis_model=lambda: "qwen-max",
+            get_llm_configs=lambda: [],
+        )
+
+        with patch("app.core.unified_config.unified_config", fake_unified_config), \
+             patch("app.services.simple_analysis_service.create_analysis_config", return_value={"memory_enabled": False}), \
+             patch("app.services.simple_analysis_service.get_provider_and_url_by_model_sync") as mock_provider_lookup:
+            mock_provider_lookup.side_effect = [
+                {
+                    "provider": "dashscope",
+                    "backend_url": "https://dashscope.aliyuncs.com/api/v1",
+                    "api_key": None,
+                },
+                {
+                    "provider": "dashscope",
+                    "backend_url": "https://dashscope.aliyuncs.com/api/v1",
+                    "api_key": None,
+                },
+            ]
+            runtime = engine._get_analysis_runtime()
+
+        assert runtime["quick_provider"] == "dashscope"
+        assert runtime["deep_provider"] == "dashscope"
+        assert engine._ai_disabled_reason is not None
+        assert "API Key 缺失" in engine._ai_disabled_reason
+
     @pytest.mark.asyncio
     async def test_run_ai_analysis_reuses_graph_in_fast_mode(self):
         from app.services.backtest_service import BacktestEngine
@@ -351,8 +389,10 @@ class TestBacktestModelRouting:
                 return {}, {"action": "HOLD", "confidence": 0.1}
 
         class FakeLoop:
-            async def run_in_executor(self, executor, func, *args):
-                return func(*args)
+            def run_in_executor(self, executor, func, *args):
+                fut = asyncio.Future()
+                fut.set_result(func(*args))
+                return fut
 
         with patch.object(engine, "_get_analysis_runtime", return_value=fake_runtime), \
              patch("tradingagents.graph.trading_graph.TradingAgentsGraph", FakeGraph), \
@@ -361,6 +401,36 @@ class TestBacktestModelRouting:
             await engine._run_ai_analysis("000001", "2026-02-25")
 
         assert len(created_graphs) == 1
+
+    @pytest.mark.asyncio
+    async def test_run_ai_analysis_disables_ai_after_consecutive_timeouts(self):
+        from app.services.backtest_service import BacktestEngine
+
+        task = make_test_task()
+        engine = BacktestEngine(task)
+
+        class FakeGraph:
+            def propagate(self, symbol, date_str):
+                return {}, {"action": "BUY", "confidence": 0.9}
+
+        class FakeLoop:
+            def run_in_executor(self, executor, func, *args):
+                fut = asyncio.Future()
+                fut.set_result(func(*args))
+                return fut
+
+        with patch.object(engine, "_get_trading_graph", return_value=FakeGraph()), \
+             patch("asyncio.get_running_loop", return_value=FakeLoop()), \
+             patch.object(engine, "_refresh_executor_after_timeout"), \
+             patch("app.services.backtest_service.asyncio.wait_for", side_effect=asyncio.TimeoutError):
+            first = await engine._run_ai_analysis("000001", "2026-02-24")
+            second = await engine._run_ai_analysis("000001", "2026-02-25")
+
+        assert first["action"] == "HOLD"
+        assert "超时" in first["reasoning"]
+        assert second["action"] == "HOLD"
+        assert "连续超时" in second["reasoning"]
+        assert engine._ai_disabled_reason is not None
 
 
 class TestBacktestMarketDataCache:
