@@ -133,28 +133,71 @@ class BacktestEngine:
         runtime = self._analysis_runtime or {}
         quick_timeout = int(runtime.get("quick_timeout") or 180)
         deep_timeout = int(runtime.get("deep_timeout") or 180)
-        selected_analysts = {str(name).strip() for name in (self.config.selected_analysts or []) if str(name).strip()}
-        analyst_count = len(selected_analysts)
-        if "sentiment" in selected_analysts:
-            # 图执行时 sentiment 会展开成 social + emotion 两个独立分析节点。
-            analyst_count += 1
-        analyst_count = max(1, analyst_count)
-        research_depth = str(self.config.research_depth or "").strip()
+        config = runtime.get("config") or {}
 
-        # 研究深度决定了管理节点和辩论链路的额外开销。
-        depth_overhead = {
-            "快速": 120,
-            "基础": 180,
-            "标准": 240,
-            "深度": 360,
-            "全面": 480,
-        }.get(research_depth, 180)
+        selected_analysts = [
+            str(name).strip()
+            for name in (self.config.selected_analysts or [])
+            if str(name).strip()
+        ]
+        expanded_analysts: List[str] = []
+        for analyst in selected_analysts:
+            if analyst == "sentiment":
+                # 与 TradingAgentsGraph 保持一致：sentiment 会展开为 5 个独立分析节点。
+                expanded_analysts.extend([
+                    "social",
+                    "emotion",
+                    "fund_flow",
+                    "theme_rotation",
+                    "institutional_theme",
+                ])
+            else:
+                expanded_analysts.append(analyst)
+        expanded_analysts = list(dict.fromkeys(expanded_analysts))
+        analyst_count = max(1, len(expanded_analysts))
 
-        # 回测中的完整图执行不仅包含单个模型调用，还会随着分析师数量线性增长。
-        model_budget = max(quick_timeout, deep_timeout) * 2
-        analyst_budget = max(0, analyst_count - 1) * 75
-        raw_timeout = model_budget + depth_overhead + analyst_budget
-        return max(self.MIN_ANALYSIS_TIMEOUT_SECONDS, min(self.MAX_ANALYSIS_TIMEOUT_SECONDS, raw_timeout))
+        max_debate_rounds = int(config.get("max_debate_rounds", 1) or 1)
+        max_risk_discuss_rounds = int(config.get("max_risk_discuss_rounds", 1) or 1)
+
+        # 整个回测分析不是单次 LLM 请求，而是一条完整工作流：
+        # 分析师节点 + 多空研究员辩论 + Research Manager + Trader
+        # + 风险讨论 + Signal Processor。此前仅按“2次模型调用 + 分析师个数”估算，
+        # 在 sentiment 展开、辩论轮次增加时会严重低估总时长。
+        estimated_llm_calls = (
+            analyst_count +
+            (2 * max_debate_rounds) +   # Bull / Bear
+            1 +                         # Research Manager
+            1 +                         # Trader
+            (3 * max_risk_discuss_rounds) +  # Risky / Safe / Neutral
+            1                           # Signal Processor
+        )
+
+        # 带独立工具节点的分析师通常还会消耗大量 I/O 时间。
+        tool_analysts = {"social", "emotion", "fund_flow", "theme_rotation", "institutional_theme", "fundamentals"}
+        estimated_tool_calls = len([name for name in expanded_analysts if name in tool_analysts])
+
+        per_llm_budget = max(quick_timeout, deep_timeout) + 15
+        tool_budget = estimated_tool_calls * 30
+        misc_budget = 90 + analyst_count * 5
+        raw_timeout = estimated_llm_calls * per_llm_budget + tool_budget + misc_budget
+        computed_timeout = max(
+            self.MIN_ANALYSIS_TIMEOUT_SECONDS,
+            min(self.MAX_ANALYSIS_TIMEOUT_SECONDS, raw_timeout)
+        )
+        logger.info(
+            "⏱️ [回测超时估算] quick=%ss deep=%ss analysts=%s expanded=%s "
+            "debate_rounds=%s risk_rounds=%s llm_calls=%s tool_calls=%s => timeout=%ss",
+            quick_timeout,
+            deep_timeout,
+            selected_analysts,
+            expanded_analysts,
+            max_debate_rounds,
+            max_risk_discuss_rounds,
+            estimated_llm_calls,
+            estimated_tool_calls,
+            computed_timeout,
+        )
+        return computed_timeout
 
     def _refresh_executor_after_timeout(self):
         """单次分析超时后重建线程池，避免被卡死线程长期占用"""
