@@ -38,7 +38,7 @@ from .reflection import Reflector
 from .signal_processing import SignalProcessor
 
 
-def create_llm_by_provider(provider: str, model: str, backend_url: str, temperature: float, max_tokens: int, timeout: int, api_key: str = None):
+def create_llm_by_provider(provider: str, model: str, backend_url: str, temperature: float, max_tokens: int, timeout: int, max_retries: int = 10, api_key: str = None):
     """
     根据 provider 创建对应的 LLM 实例
 
@@ -73,7 +73,8 @@ def create_llm_by_provider(provider: str, model: str, backend_url: str, temperat
             base_url=backend_url if backend_url else None,
             temperature=temperature,
             max_tokens=max_tokens,
-            timeout=timeout
+            timeout=timeout,
+            max_retries=max_retries
         )
 
     elif provider.lower() == "dashscope":
@@ -87,7 +88,8 @@ def create_llm_by_provider(provider: str, model: str, backend_url: str, temperat
             base_url=backend_url if backend_url else None,  # 如果有自定义 URL 则使用
             temperature=temperature,
             max_tokens=max_tokens,
-            request_timeout=timeout
+            request_timeout=timeout,
+            max_retries=max_retries
         )
 
     elif provider.lower() == "deepseek":
@@ -102,7 +104,8 @@ def create_llm_by_provider(provider: str, model: str, backend_url: str, temperat
             base_url=backend_url,
             temperature=temperature,
             max_tokens=max_tokens,
-            timeout=timeout
+            timeout=timeout,
+            max_retries=max_retries
         )
 
     elif provider.lower() == "zhipu":
@@ -118,7 +121,8 @@ def create_llm_by_provider(provider: str, model: str, backend_url: str, temperat
             base_url=backend_url,  # 使用用户提供的backend_url
             temperature=temperature,
             max_tokens=max_tokens,
-            timeout=timeout
+            timeout=timeout,
+            max_retries=max_retries
         )
 
     elif provider.lower() in ["openai", "siliconflow", "openrouter", "ollama"]:
@@ -137,7 +141,8 @@ def create_llm_by_provider(provider: str, model: str, backend_url: str, temperat
             api_key=api_key,
             temperature=temperature,
             max_tokens=max_tokens,
-            timeout=timeout
+            timeout=timeout,
+            max_retries=max_retries
         )
 
     elif provider.lower() == "anthropic":
@@ -146,7 +151,8 @@ def create_llm_by_provider(provider: str, model: str, backend_url: str, temperat
             base_url=backend_url,
             temperature=temperature,
             max_tokens=max_tokens,
-            timeout=timeout
+            timeout=timeout,
+            max_retries=max_retries
         )
 
     elif provider.lower() in ["qianfan", "custom_openai"]:
@@ -156,7 +162,8 @@ def create_llm_by_provider(provider: str, model: str, backend_url: str, temperat
             base_url=backend_url,
             temperature=temperature,
             max_tokens=max_tokens,
-            timeout=timeout
+            timeout=timeout,
+            max_retries=max_retries
         )
 
     else:
@@ -189,7 +196,8 @@ def create_llm_by_provider(provider: str, model: str, backend_url: str, temperat
             api_key=custom_api_key,
             temperature=temperature,
             max_tokens=max_tokens,
-            timeout=timeout
+            timeout=timeout,
+            max_retries=max_retries
         )
 
 
@@ -245,11 +253,13 @@ class TradingAgentsGraph:
         quick_max_tokens = quick_config.get("max_tokens", 4000)
         quick_temperature = quick_config.get("temperature", 0.7)
         quick_timeout = quick_config.get("timeout", 180)
+        quick_max_retries = quick_config.get("max_retries", 10)
 
         # 读取深度模型参数
         deep_max_tokens = deep_config.get("max_tokens", 4000)
         deep_temperature = deep_config.get("temperature", 0.7)
         deep_timeout = deep_config.get("timeout", 180)
+        deep_max_retries = deep_config.get("max_retries", 10)
 
         # 🔧 检查是否为混合模式（快速模型和深度模型来自不同厂家）
         quick_provider = self.config.get("quick_provider")
@@ -271,6 +281,7 @@ class TradingAgentsGraph:
                 temperature=quick_temperature,
                 max_tokens=quick_max_tokens,
                 timeout=quick_timeout,
+                max_retries=quick_max_retries,
                 api_key=self.config.get("quick_api_key")  # 🔥 传递 API Key
             )
 
@@ -281,6 +292,7 @@ class TradingAgentsGraph:
                 temperature=deep_temperature,
                 max_tokens=deep_max_tokens,
                 timeout=deep_timeout,
+                max_retries=deep_max_retries,
                 api_key=self.config.get("deep_api_key")  # 🔥 传递 API Key
             )
 
@@ -295,14 +307,16 @@ class TradingAgentsGraph:
                 base_url=self.config["backend_url"],
                 temperature=deep_temperature,
                 max_tokens=deep_max_tokens,
-                timeout=deep_timeout
+                timeout=deep_timeout,
+                max_retries=deep_max_retries
             )
             self.quick_thinking_llm = ChatOpenAI(
                 model=self.config["quick_think_llm"],
                 base_url=self.config["backend_url"],
                 temperature=quick_temperature,
                 max_tokens=quick_max_tokens,
-                timeout=quick_timeout
+                timeout=quick_timeout,
+                max_retries=quick_max_retries
             )
         elif self.config["llm_provider"] == "siliconflow":
             # SiliconFlow支持：使用OpenAI兼容API
@@ -320,7 +334,8 @@ class TradingAgentsGraph:
                 api_key=siliconflow_api_key,
                 temperature=deep_temperature,
                 max_tokens=deep_max_tokens,
-                timeout=deep_timeout
+                timeout=deep_timeout,
+                max_retries=deep_max_retries
             )
             self.quick_thinking_llm = ChatOpenAI(
                 model=self.config["quick_think_llm"],
@@ -328,7 +343,8 @@ class TradingAgentsGraph:
                 api_key=siliconflow_api_key,
                 temperature=quick_temperature,
                 max_tokens=quick_max_tokens,
-                timeout=quick_timeout
+                timeout=quick_timeout,
+                max_retries=quick_max_retries
             )
         elif self.config["llm_provider"] == "openrouter":
             # OpenRouter支持：优先使用OPENROUTER_API_KEY，否则使用OPENAI_API_KEY
@@ -346,7 +362,8 @@ class TradingAgentsGraph:
                 api_key=openrouter_api_key,
                 temperature=deep_temperature,
                 max_tokens=deep_max_tokens,
-                timeout=deep_timeout
+                timeout=deep_timeout,
+                max_retries=deep_max_retries
             )
             self.quick_thinking_llm = ChatOpenAI(
                 model=self.config["quick_think_llm"],
@@ -354,7 +371,8 @@ class TradingAgentsGraph:
                 api_key=openrouter_api_key,
                 temperature=quick_temperature,
                 max_tokens=quick_max_tokens,
-                timeout=quick_timeout
+                timeout=quick_timeout,
+                max_retries=quick_max_retries
             )
         elif self.config["llm_provider"] == "ollama":
             logger.info(f"🔧 [Ollama-快速模型] max_tokens={quick_max_tokens}, temperature={quick_temperature}, timeout={quick_timeout}s")
@@ -365,14 +383,16 @@ class TradingAgentsGraph:
                 base_url=self.config["backend_url"],
                 temperature=deep_temperature,
                 max_tokens=deep_max_tokens,
-                timeout=deep_timeout
+                timeout=deep_timeout,
+                max_retries=deep_max_retries
             )
             self.quick_thinking_llm = ChatOpenAI(
                 model=self.config["quick_think_llm"],
                 base_url=self.config["backend_url"],
                 temperature=quick_temperature,
                 max_tokens=quick_max_tokens,
-                timeout=quick_timeout
+                timeout=quick_timeout,
+                max_retries=quick_max_retries
             )
         elif self.config["llm_provider"].lower() == "anthropic":
             logger.info(f"🔧 [Anthropic-快速模型] max_tokens={quick_max_tokens}, temperature={quick_temperature}, timeout={quick_timeout}s")
@@ -383,14 +403,16 @@ class TradingAgentsGraph:
                 base_url=self.config["backend_url"],
                 temperature=deep_temperature,
                 max_tokens=deep_max_tokens,
-                timeout=deep_timeout
+                timeout=deep_timeout,
+                max_retries=deep_max_retries
             )
             self.quick_thinking_llm = ChatAnthropic(
                 model=self.config["quick_think_llm"],
                 base_url=self.config["backend_url"],
                 temperature=quick_temperature,
                 max_tokens=quick_max_tokens,
-                timeout=quick_timeout
+                timeout=quick_timeout,
+                max_retries=quick_max_retries
             )
         elif self.config["llm_provider"].lower() == "google":
             # 使用 Google OpenAI 兼容适配器，解决工具调用格式不匹配问题
@@ -431,7 +453,8 @@ class TradingAgentsGraph:
                 base_url=backend_url if backend_url else None,
                 temperature=deep_temperature,
                 max_tokens=deep_max_tokens,
-                timeout=deep_timeout
+                timeout=deep_timeout,
+                max_retries=deep_max_retries
             )
             self.quick_thinking_llm = ChatGoogleOpenAI(
                 model=self.config["quick_think_llm"],
@@ -440,6 +463,7 @@ class TradingAgentsGraph:
                 temperature=quick_temperature,
                 max_tokens=quick_max_tokens,
                 timeout=quick_timeout,
+                max_retries=quick_max_retries,
                 transport="rest"
             )
 
@@ -494,7 +518,8 @@ class TradingAgentsGraph:
                 base_url=backend_url if backend_url else None,  # 传递 base_url
                 temperature=deep_temperature,
                 max_tokens=deep_max_tokens,
-                request_timeout=deep_timeout
+                request_timeout=deep_timeout,
+                max_retries=deep_max_retries
             )
 
             logger.info("=" * 80)
@@ -513,7 +538,8 @@ class TradingAgentsGraph:
                 base_url=backend_url if backend_url else None,  # 传递 base_url
                 temperature=quick_temperature,
                 max_tokens=quick_max_tokens,
-                request_timeout=quick_timeout
+                request_timeout=quick_timeout,
+                max_retries=quick_max_retries
             )
             logger.info(f"✅ [阿里百炼] 已应用用户配置的模型参数")
         elif (self.config["llm_provider"].lower() == "deepseek" or
@@ -551,7 +577,8 @@ class TradingAgentsGraph:
                 base_url=deepseek_base_url,
                 temperature=deep_temperature,
                 max_tokens=deep_max_tokens,
-                timeout=deep_timeout
+                timeout=deep_timeout,
+                max_retries=deep_max_retries
             )
             self.quick_thinking_llm = ChatDeepSeek(
                 model=self.config["quick_think_llm"],
@@ -559,7 +586,8 @@ class TradingAgentsGraph:
                 base_url=deepseek_base_url,
                 temperature=quick_temperature,
                 max_tokens=quick_max_tokens,
-                timeout=quick_timeout
+                timeout=quick_timeout,
+                max_retries=quick_max_retries
             )
 
             logger.info(f"✅ [DeepSeek] 已启用token统计功能并应用用户配置的模型参数")
@@ -596,7 +624,8 @@ class TradingAgentsGraph:
                 base_url=custom_base_url,
                 temperature=deep_temperature,
                 max_tokens=deep_max_tokens,
-                timeout=deep_timeout
+                timeout=deep_timeout,
+                max_retries=deep_max_retries
             )
             self.quick_thinking_llm = create_openai_compatible_llm(
                 provider="custom_openai",
@@ -604,7 +633,8 @@ class TradingAgentsGraph:
                 base_url=custom_base_url,
                 temperature=quick_temperature,
                 max_tokens=quick_max_tokens,
-                timeout=quick_timeout
+                timeout=quick_timeout,
+                max_retries=quick_max_retries
             )
 
             logger.info(f"✅ [自定义OpenAI] 已配置自定义端点并应用用户配置的模型参数")
@@ -633,14 +663,16 @@ class TradingAgentsGraph:
                 model=self.config["deep_think_llm"],
                 temperature=deep_temperature,
                 max_tokens=deep_max_tokens,
-                timeout=deep_timeout
+                timeout=deep_timeout,
+                max_retries=deep_max_retries
             )
             self.quick_thinking_llm = create_openai_compatible_llm(
                 provider="qianfan",
                 model=self.config["quick_think_llm"],
                 temperature=quick_temperature,
                 max_tokens=quick_max_tokens,
-                timeout=quick_timeout
+                timeout=quick_timeout,
+                max_retries=quick_max_retries
             )
             logger.info("✅ [千帆] 文心一言适配器已配置成功并应用用户配置的模型参数")
         elif self.config["llm_provider"].lower() == "zhipu":
@@ -683,7 +715,8 @@ class TradingAgentsGraph:
                 base_url=backend_url,  # 使用用户配置的backend_url
                 temperature=deep_temperature,
                 max_tokens=deep_max_tokens,
-                timeout=deep_timeout
+                timeout=deep_timeout,
+                max_retries=deep_max_retries
             )
             self.quick_thinking_llm = ChatZhipuOpenAI(
                 model=self.config["quick_think_llm"],
@@ -691,7 +724,8 @@ class TradingAgentsGraph:
                 base_url=backend_url,  # 使用用户配置的backend_url
                 temperature=quick_temperature,
                 max_tokens=quick_max_tokens,
-                timeout=quick_timeout
+                timeout=quick_timeout,
+                max_retries=quick_max_retries
             )
             
             logger.info("✅ [智谱AI] 已使用专用适配器配置成功并应用用户配置的模型参数")
@@ -763,7 +797,8 @@ class TradingAgentsGraph:
                 base_url=backend_url,
                 temperature=deep_temperature,
                 max_tokens=deep_max_tokens,
-                timeout=deep_timeout
+                timeout=deep_timeout,
+                max_retries=deep_max_retries
             )
             self.quick_thinking_llm = create_openai_compatible_llm(
                 provider="custom_openai",
@@ -772,7 +807,8 @@ class TradingAgentsGraph:
                 base_url=backend_url,
                 temperature=quick_temperature,
                 max_tokens=quick_max_tokens,
-                timeout=quick_timeout
+                timeout=quick_timeout,
+                max_retries=quick_max_retries
             )
 
             logger.info(f"✅ [自定义厂家 {provider_name}] 已配置自定义端点并应用用户配置的模型参数")
@@ -1005,6 +1041,12 @@ class TradingAgentsGraph:
                 # 默认情况(回测等)：强制使用 updates 模式以便精确计时
                 logger.info("⏱️ 使用 updates 模式执行分析以便计时（无进度回调）")
                 args["stream_mode"] = "updates"
+                
+                if "config" not in args:
+                    args["config"] = {}
+                if "max_concurrency" not in args["config"]:
+                    args["config"]["max_concurrency"] = self.config.get("max_concurrency", 4)
+                    
                 final_state = init_agent_state.copy()
                 for chunk in self.graph.stream(init_agent_state, **args):
                     for node_name, node_update in chunk.items():
