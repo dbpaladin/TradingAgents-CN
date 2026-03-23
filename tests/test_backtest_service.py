@@ -448,7 +448,7 @@ class TestBacktestModelRouting:
         assert len(created_graphs) == 1
 
     @pytest.mark.asyncio
-    async def test_run_ai_analysis_disables_ai_after_consecutive_timeouts(self):
+    async def test_run_ai_analysis_switches_to_lightweight_mode_before_disabling(self):
         from app.services.backtest_service import BacktestEngine
 
         task = make_test_task()
@@ -464,17 +464,44 @@ class TestBacktestModelRouting:
                 fut.set_result(func(*args))
                 return fut
 
-        with patch.object(engine, "_get_trading_graph", return_value=FakeGraph()), \
+        fake_primary_runtime = {
+            "runtime_mode": "primary",
+            "quick_timeout": 180,
+            "deep_timeout": 180,
+            "config": {},
+            "reuse_graph": False,
+            "selected_analysts": ["market"],
+            "quick_model": "gpt-4o-mini",
+            "quick_provider": "openai",
+            "quick_api_key": "sk-quick",
+            "quick_backend_url": "https://api.openai.com/v1",
+        }
+
+        fake_degraded_runtime = {
+            "runtime_mode": "degraded",
+            "quick_timeout": 60,
+            "deep_timeout": 60,
+            "config": {},
+            "reuse_graph": False,
+            "selected_analysts": ["market"],
+        }
+
+        with patch.object(engine, "_get_analysis_runtime", return_value=fake_primary_runtime), \
+             patch.object(engine, "_build_degraded_runtime", return_value=fake_degraded_runtime), \
+             patch.object(engine, "_get_trading_graph", return_value=FakeGraph()), \
              patch("asyncio.get_running_loop", return_value=FakeLoop()), \
              patch.object(engine, "_refresh_executor_after_timeout"), \
              patch("app.services.backtest_service.asyncio.wait_for", side_effect=asyncio.TimeoutError):
             first = await engine._run_ai_analysis("000001", "2026-02-24")
             second = await engine._run_ai_analysis("000001", "2026-02-25")
+            third = await engine._run_ai_analysis("000001", "2026-02-26")
 
         assert first["action"] == "HOLD"
         assert "超时" in first["reasoning"]
         assert second["action"] == "HOLD"
-        assert "连续超时" in second["reasoning"]
+        assert "模式=degraded" in second["reasoning"]
+        assert third["action"] == "HOLD"
+        assert "轻量分析模式连续超时" in third["reasoning"]
         assert engine._ai_disabled_reason is not None
 
 

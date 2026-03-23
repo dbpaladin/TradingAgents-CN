@@ -64,6 +64,9 @@ class BacktestEngine:
     # 单次 AI 分析硬超时（秒）：防止某个交易日无限卡住
     MIN_ANALYSIS_TIMEOUT_SECONDS = 120
     MAX_ANALYSIS_TIMEOUT_SECONDS = 1800
+    LIGHTWEIGHT_MAX_MODEL_TIMEOUT_SECONDS = 90
+    LIGHTWEIGHT_MIN_MODEL_TIMEOUT_SECONDS = 30
+    LIGHTWEIGHT_MAX_ANALYSTS = 2
     MAX_CONSECUTIVE_TIMEOUTS_BEFORE_DISABLE = 2
 
     def __init__(self, task: BacktestTask, progress_callback=None):
@@ -75,11 +78,14 @@ class BacktestEngine:
             thread_name_prefix=f"backtest-{task.task_id[:8]}"
         )
         self._analysis_runtime: Optional[Dict[str, Any]] = None
-        self._reusable_trading_graph = None
+        self._degraded_runtime: Optional[Dict[str, Any]] = None
+        self._reusable_trading_graphs: Dict[str, Any] = {}
         self._stock_price_cache: Dict[str, float] = {}
         self._benchmark_price_cache: Dict[str, float] = {}
         self._ai_disabled_reason: Optional[str] = None
+        self._analysis_mode = "primary"
         self._consecutive_analysis_timeouts = 0
+        self._total_analysis_timeouts = 0
 
         # 账户状态
         self.cash = self.config.initial_capital
@@ -128,16 +134,128 @@ class BacktestEngine:
             return None
         return "回测检测到模型 API Key 缺失（" + ", ".join(missing) + "），已自动降级为仅持有(HOLD)以避免长时间卡住"
 
-    def _compute_analysis_timeout_seconds(self) -> int:
+    def _pick_lightweight_analysts(self, selected_analysts: List[str]) -> List[str]:
+        """从当前分析师集合中挑选轻量回测模式优先使用的子集"""
+        candidates = [str(name).strip() for name in (selected_analysts or []) if str(name).strip()]
+        candidate_set = set(candidates)
+        priority = ["market", "fundamentals", "news", "social"]
+
+        picked: List[str] = []
+        for name in priority:
+            if name in candidate_set:
+                picked.append(name)
+            if len(picked) >= self.LIGHTWEIGHT_MAX_ANALYSTS:
+                break
+
+        if not picked:
+            # sentiment 会在图中展开为多个节点，轻量模式只取 market 作为保底。
+            if "sentiment" in candidate_set:
+                picked = ["market"]
+            elif candidates:
+                picked = [candidates[0]]
+            else:
+                picked = ["market"]
+        return picked
+
+    def _build_degraded_runtime(self) -> Dict[str, Any]:
+        """构建轻量降级运行时：减少分析节点、收敛模型请求时长与重试次数"""
+        base_runtime = self._get_analysis_runtime()
+        base_config = dict(base_runtime.get("config") or {})
+        base_selected = base_runtime.get("selected_analysts") or self.config.selected_analysts or []
+        lightweight_analysts = self._pick_lightweight_analysts(base_selected)
+
+        quick_model = base_runtime.get("quick_model")
+        quick_provider = base_runtime.get("quick_provider")
+        quick_api_key = base_runtime.get("quick_api_key")
+        quick_backend_url = base_runtime.get("quick_backend_url") or base_config.get("backend_url")
+        quick_timeout = int(base_runtime.get("quick_timeout") or 180)
+
+        lightweight_timeout = min(
+            self.LIGHTWEIGHT_MAX_MODEL_TIMEOUT_SECONDS,
+            max(self.LIGHTWEIGHT_MIN_MODEL_TIMEOUT_SECONDS, quick_timeout),
+        )
+
+        quick_model_config = dict(base_config.get("quick_model_config") or {})
+        quick_model_config["timeout"] = lightweight_timeout
+        quick_model_config["max_retries"] = 1
+        quick_model_config["retry_times"] = 1
+
+        deep_model_config = dict(base_config.get("deep_model_config") or quick_model_config)
+        deep_model_config["timeout"] = lightweight_timeout
+        deep_model_config["max_retries"] = 1
+        deep_model_config["retry_times"] = 1
+
+        degraded_config = dict(base_config)
+        degraded_config["selected_analysts"] = lightweight_analysts
+        degraded_config["max_debate_rounds"] = 1
+        degraded_config["max_risk_discuss_rounds"] = 1
+        degraded_config["memory_enabled"] = False
+        degraded_config["research_depth"] = "快速"
+        degraded_config["llm_provider"] = quick_provider
+        degraded_config["backend_url"] = quick_backend_url
+        degraded_config["quick_think_llm"] = quick_model
+        degraded_config["deep_think_llm"] = quick_model
+        degraded_config["quick_provider"] = quick_provider
+        degraded_config["deep_provider"] = quick_provider
+        degraded_config["quick_backend_url"] = quick_backend_url
+        degraded_config["deep_backend_url"] = quick_backend_url
+        degraded_config["quick_model_config"] = quick_model_config
+        degraded_config["deep_model_config"] = deep_model_config
+        degraded_config["quick_api_key"] = quick_api_key
+        degraded_config["deep_api_key"] = quick_api_key
+
+        return {
+            "runtime_mode": "degraded",
+            "quick_model": quick_model,
+            "deep_model": quick_model,
+            "quick_provider": quick_provider,
+            "deep_provider": quick_provider,
+            "quick_api_key": quick_api_key,
+            "deep_api_key": quick_api_key,
+            "quick_timeout": lightweight_timeout,
+            "deep_timeout": lightweight_timeout,
+            "config": degraded_config,
+            "reuse_graph": True,
+            "selected_analysts": lightweight_analysts,
+            "quick_backend_url": quick_backend_url,
+            "deep_backend_url": quick_backend_url,
+        }
+
+    def _get_active_analysis_runtime(self) -> Dict[str, Any]:
+        """获取当前分析模式对应的运行时配置"""
+        if self._analysis_mode == "degraded":
+            if self._degraded_runtime is None:
+                self._degraded_runtime = self._build_degraded_runtime()
+            return self._degraded_runtime
+        return self._get_analysis_runtime()
+
+    def _switch_to_degraded_mode(self, reason: str):
+        """主模式超时后切换到轻量模式，避免整段回测被 HOLD 锁死"""
+        if self._analysis_mode == "degraded":
+            return
+        self._analysis_mode = "degraded"
+        self._consecutive_analysis_timeouts = 0
+        self._degraded_runtime = self._build_degraded_runtime()
+        self._reusable_trading_graphs.pop("degraded", None)
+        logger.warning(
+            "⚠️ [回测降级] %s | analysts=%s quick=%s(%s) timeout=%ss",
+            reason,
+            self._degraded_runtime.get("selected_analysts"),
+            self._degraded_runtime.get("quick_model"),
+            self._degraded_runtime.get("quick_provider"),
+            self._degraded_runtime.get("quick_timeout"),
+        )
+
+    def _compute_analysis_timeout_seconds(self, runtime: Optional[Dict[str, Any]] = None) -> int:
         """计算单次分析的硬超时，兼顾模型配置与全链路开销"""
-        runtime = self._analysis_runtime or {}
+        runtime = runtime or self._get_active_analysis_runtime()
         quick_timeout = int(runtime.get("quick_timeout") or 180)
         deep_timeout = int(runtime.get("deep_timeout") or 180)
         config = runtime.get("config") or {}
 
         selected_analysts = [
             str(name).strip()
-            for name in (self.config.selected_analysts or [])
+            for name in (runtime.get("selected_analysts") or self.config.selected_analysts or [])
             if str(name).strip()
         ]
         expanded_analysts: List[str] = []
@@ -185,8 +303,9 @@ class BacktestEngine:
             min(self.MAX_ANALYSIS_TIMEOUT_SECONDS, raw_timeout)
         )
         logger.info(
-            "⏱️ [回测超时估算] quick=%ss deep=%ss analysts=%s expanded=%s "
+            "⏱️ [回测超时估算] mode=%s quick=%ss deep=%ss analysts=%s expanded=%s "
             "debate_rounds=%s risk_rounds=%s llm_calls=%s tool_calls=%s => timeout=%ss",
+            runtime.get("runtime_mode", self._analysis_mode),
             quick_timeout,
             deep_timeout,
             selected_analysts,
@@ -208,7 +327,7 @@ class BacktestEngine:
         )
         old_executor.shutdown(wait=False, cancel_futures=True)
         # 复用图可能带有脏状态，超时后强制重建
-        self._reusable_trading_graph = None
+        self._reusable_trading_graphs.clear()
 
     async def _update_progress(self, progress: int, current_date: str, message: str):
         """更新进度"""
@@ -623,6 +742,7 @@ class BacktestEngine:
         config["backend_url"] = quick_provider_info["backend_url"]
 
         self._analysis_runtime = {
+            "runtime_mode": "primary",
             "quick_model": quick_model,
             "deep_model": deep_model,
             "quick_provider": quick_provider,
@@ -634,6 +754,9 @@ class BacktestEngine:
             "config": config,
             # 仅在禁用记忆时复用图实例，避免跨日状态污染。
             "reuse_graph": not config.get("memory_enabled", True),
+            "selected_analysts": list(self.config.selected_analysts or []),
+            "quick_backend_url": quick_provider_info["backend_url"],
+            "deep_backend_url": deep_provider_info["backend_url"],
         }
         self._ai_disabled_reason = self._build_ai_disabled_reason(self._analysis_runtime)
         if self._ai_disabled_reason:
@@ -649,22 +772,24 @@ class BacktestEngine:
         )
         return self._analysis_runtime
 
-    def _get_trading_graph(self):
+    def _get_trading_graph(self, runtime: Optional[Dict[str, Any]] = None):
         """获取可复用或按需创建的 TradingAgentsGraph 实例"""
-        runtime = self._get_analysis_runtime()
+        runtime = runtime or self._get_active_analysis_runtime()
         from tradingagents.graph.trading_graph import TradingAgentsGraph
+        runtime_mode = runtime.get("runtime_mode", self._analysis_mode)
+        selected_analysts = runtime.get("selected_analysts") or self.config.selected_analysts
 
         if runtime["reuse_graph"]:
-            if self._reusable_trading_graph is None:
-                self._reusable_trading_graph = TradingAgentsGraph(
-                    selected_analysts=self.config.selected_analysts,
+            if runtime_mode not in self._reusable_trading_graphs:
+                self._reusable_trading_graphs[runtime_mode] = TradingAgentsGraph(
+                    selected_analysts=selected_analysts,
                     debug=False,
                     config=runtime["config"]
                 )
-            return self._reusable_trading_graph
+            return self._reusable_trading_graphs[runtime_mode]
 
         return TradingAgentsGraph(
-            selected_analysts=self.config.selected_analysts,
+            selected_analysts=selected_analysts,
             debug=False,
             config=runtime["config"]
         )
@@ -679,11 +804,13 @@ class BacktestEngine:
                     "reasoning": self._ai_disabled_reason
                 }
 
-            trading_graph = self._get_trading_graph()
+            runtime = self._get_active_analysis_runtime()
+            runtime_mode = runtime.get("runtime_mode", self._analysis_mode)
+            trading_graph = self._get_trading_graph(runtime)
 
             # 在线程池中执行同步分析，避免每个交易日重复创建线程池。
             loop = asyncio.get_running_loop()
-            analysis_timeout = self._compute_analysis_timeout_seconds()
+            analysis_timeout = self._compute_analysis_timeout_seconds(runtime)
             result_tuple = await asyncio.wait_for(
                 loop.run_in_executor(
                     self._executor,
@@ -702,22 +829,49 @@ class BacktestEngine:
                 decision = result_tuple
 
             if isinstance(decision, dict) and decision:
-                logger.info(f"✅ AI分析完成 [{symbol} {date_str}]: action={decision.get('action')}, confidence={decision.get('confidence')}")
+                logger.info(
+                    "✅ AI分析完成 [%s %s] mode=%s: action=%s, confidence=%s",
+                    symbol,
+                    date_str,
+                    runtime_mode,
+                    decision.get("action"),
+                    decision.get("confidence"),
+                )
                 return decision
             else:
                 logger.warning(f"⚠️ AI分析返回空决策 [{symbol} {date_str}]: {decision}")
                 return {}
         except asyncio.TimeoutError:
+            runtime = self._get_active_analysis_runtime()
+            runtime_mode = runtime.get("runtime_mode", self._analysis_mode)
+            analysis_timeout = self._compute_analysis_timeout_seconds(runtime)
             self._consecutive_analysis_timeouts += 1
+            self._total_analysis_timeouts += 1
             timeout_reason = (
-                f"AI分析超时({self._compute_analysis_timeout_seconds()}s)"
+                f"AI分析超时({analysis_timeout}s, 模式={runtime_mode})"
                 f" [连续超时 {self._consecutive_analysis_timeouts}]"
             )
             logger.error("❌ %s [%s %s]，将重建线程池后继续", timeout_reason, symbol, date_str)
             self._refresh_executor_after_timeout()
-            if self._consecutive_analysis_timeouts >= self.MAX_CONSECUTIVE_TIMEOUTS_BEFORE_DISABLE:
+
+            if (
+                runtime_mode == "primary" and
+                self._consecutive_analysis_timeouts >= self.MAX_CONSECUTIVE_TIMEOUTS_BEFORE_DISABLE
+            ):
+                switch_reason = (
+                    f"主分析模式连续超时达到{self.MAX_CONSECUTIVE_TIMEOUTS_BEFORE_DISABLE}次，"
+                    "已自动切换轻量模式重试"
+                )
+                self._switch_to_degraded_mode(switch_reason)
+                # 当前交易日立刻用轻量模式重试一次，减少无效 HOLD。
+                return await self._run_ai_analysis(symbol, date_str)
+
+            if (
+                runtime_mode == "degraded" and
+                self._consecutive_analysis_timeouts >= self.MAX_CONSECUTIVE_TIMEOUTS_BEFORE_DISABLE
+            ):
                 self._ai_disabled_reason = (
-                    f"AI分析连续超时达到{self.MAX_CONSECUTIVE_TIMEOUTS_BEFORE_DISABLE}次，"
+                    f"轻量分析模式连续超时达到{self.MAX_CONSECUTIVE_TIMEOUTS_BEFORE_DISABLE}次，"
                     "后续日期已自动降级为 HOLD 以保证回测可完成"
                 )
                 logger.error("🛑 [回测降级] %s", self._ai_disabled_reason)
