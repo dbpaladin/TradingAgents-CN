@@ -389,7 +389,7 @@ class TestBacktestModelRouting:
             "deep_timeout": 180,
         }
 
-        assert engine._compute_analysis_timeout_seconds() == 1005
+        assert engine._compute_analysis_timeout_seconds() == 1800
 
     def test_compute_analysis_timeout_counts_sentiment_expansion(self):
         from app.services.backtest_service import BacktestEngine
@@ -411,7 +411,7 @@ class TestBacktestModelRouting:
             "deep_timeout": 180,
         }
 
-        assert engine._compute_analysis_timeout_seconds() == 1005
+        assert engine._compute_analysis_timeout_seconds() == 1800
 
     @pytest.mark.asyncio
     async def test_run_ai_analysis_reuses_graph_in_fast_mode(self):
@@ -598,6 +598,90 @@ class TestBacktestDecisionInterval:
         assert engine._run_ai_analysis.await_count == 2
         assert not result.trades[1].ai_reason.startswith("[复用前次信号]")
         assert result.trades[2].ai_reason.startswith("[复用前次信号]")
+
+
+class TestBacktestRuleFallback:
+    @pytest.mark.asyncio
+    async def test_run_uses_rule_fallback_when_ai_timeout(self):
+        from app.services.backtest_service import BacktestEngine
+
+        task = make_test_task(start_date="2024-03-01", end_date="2024-03-05")
+        task.config.decision_interval_days = 1
+        engine = BacktestEngine(task)
+
+        trading_days = [
+            "2024-03-01",
+            "2024-03-04",
+            "2024-03-05",
+        ]
+
+        engine._update_progress = AsyncMock()
+        engine._get_trading_calendar = AsyncMock(return_value=trading_days)
+        engine._warmup_market_data = AsyncMock()
+        engine._get_analysis_runtime = MagicMock(return_value={
+            "runtime_mode": "primary",
+            "quick_timeout": 180,
+            "deep_timeout": 180,
+            "config": {},
+            "reuse_graph": False,
+            "selected_analysts": ["market"],
+        })
+        engine._get_stock_price = AsyncMock(side_effect=[10.0, 10.2, 10.1])
+        engine._get_benchmark_price = AsyncMock(side_effect=[3000.0, 3000.0, 3010.0, 3020.0])
+        engine._run_ai_analysis = AsyncMock(side_effect=[
+            {"action": "HOLD", "confidence": 0.0, "reasoning": "AI分析超时(180s) [连续超时 1]"},
+            {"action": "HOLD", "confidence": 0.0, "reasoning": "AI分析超时(180s) [连续超时 2]"},
+            {"action": "HOLD", "confidence": 0.0, "reasoning": "AI分析连续超时达到2次，后续日期已自动降级为 HOLD"},
+        ])
+
+        result = await engine.run()
+
+        executed_actions = [t.action for t in result.trades if t.executed]
+        assert TradeAction.BUY in executed_actions
+        assert TradeAction.SELL in executed_actions
+        assert all(t.ai_signal != "DIAGNOSTIC" for t in result.trades)
+
+    @pytest.mark.asyncio
+    async def test_run_enters_rule_mode_after_first_ai_failure(self):
+        from app.services.backtest_service import BacktestEngine
+
+        task = make_test_task(start_date="2024-03-01", end_date="2024-03-05")
+        task.config.decision_interval_days = 1
+        engine = BacktestEngine(task)
+
+        trading_days = [
+            "2024-03-01",
+            "2024-03-04",
+            "2024-03-05",
+        ]
+
+        engine._update_progress = AsyncMock()
+        engine._get_trading_calendar = AsyncMock(return_value=trading_days)
+        engine._warmup_market_data = AsyncMock()
+        engine._get_analysis_runtime = MagicMock(return_value={
+            "runtime_mode": "primary",
+            "quick_timeout": 180,
+            "deep_timeout": 180,
+            "config": {},
+            "reuse_graph": False,
+            "selected_analysts": ["market"],
+        })
+        engine._get_stock_price = AsyncMock(side_effect=[10.0, 9.5, 9.6])
+        engine._get_benchmark_price = AsyncMock(side_effect=[3000.0, 3000.0, 3010.0, 3020.0])
+        engine._run_ai_analysis = AsyncMock(side_effect=[
+            {"action": "HOLD", "confidence": 0.0, "reasoning": "AI分析超时(180s) [连续超时 1]"},
+            {"action": "BUY", "confidence": 0.9, "summary": "不应被调用"},
+            {"action": "SELL", "confidence": 0.9, "summary": "不应被调用"},
+        ])
+
+        result = await engine.run()
+
+        # 首次失败后应熔断为规则模式，后续不再继续调用 AI。
+        assert engine._run_ai_analysis.await_count == 1
+        assert engine._rule_mode_enabled is True
+        executed_actions = [t.action for t in result.trades if t.executed]
+        assert TradeAction.BUY in executed_actions
+        assert TradeAction.SELL in executed_actions
 
 
 class TestBacktestAutoOptimization:

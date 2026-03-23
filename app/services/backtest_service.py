@@ -67,7 +67,14 @@ class BacktestEngine:
     LIGHTWEIGHT_MAX_MODEL_TIMEOUT_SECONDS = 90
     LIGHTWEIGHT_MIN_MODEL_TIMEOUT_SECONDS = 30
     LIGHTWEIGHT_MAX_ANALYSTS = 2
+    BACKTEST_MAX_MODEL_TIMEOUT_SECONDS = 120
+    BACKTEST_MAX_MODEL_RETRIES = 2
+    BACKTEST_MAX_MODEL_TOKENS = 12000
+    RULE_FALLBACK_MA_WINDOW = 3
+    RULE_FALLBACK_ENTRY_PCT = 0.003
+    RULE_FALLBACK_EXIT_PCT = 0.003
     MAX_CONSECUTIVE_TIMEOUTS_BEFORE_DISABLE = 2
+    MAX_CONSECUTIVE_AI_FAILURES_BEFORE_RULE_MODE = 1
 
     def __init__(self, task: BacktestTask, progress_callback=None):
         self.task = task
@@ -86,6 +93,10 @@ class BacktestEngine:
         self._analysis_mode = "primary"
         self._consecutive_analysis_timeouts = 0
         self._total_analysis_timeouts = 0
+        self._rule_fallback_used = 0
+        self._consecutive_ai_failures = 0
+        self._rule_mode_enabled = False
+        self._rule_mode_reason = ""
 
         # 账户状态
         self.cash = self.config.initial_capital
@@ -133,6 +144,39 @@ class BacktestEngine:
         if not missing:
             return None
         return "回测检测到模型 API Key 缺失（" + ", ".join(missing) + "），已自动降级为仅持有(HOLD)以避免长时间卡住"
+
+    def _sanitize_backtest_model_config(self, model_name: str, model_config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """回测场景下收敛模型参数，避免 timeout/retry 叠加导致长时间阻塞"""
+        cfg = dict(model_config or {})
+
+        raw_timeout = int(cfg.get("timeout") or 180)
+        raw_retry = int(cfg.get("retry_times") or cfg.get("max_retries") or 2)
+        raw_max_tokens = int(cfg.get("max_tokens") or 4000)
+
+        cfg["timeout"] = min(raw_timeout, self.BACKTEST_MAX_MODEL_TIMEOUT_SECONDS)
+        capped_retry = min(raw_retry, self.BACKTEST_MAX_MODEL_RETRIES)
+        cfg["retry_times"] = capped_retry
+        # TradingAgentsGraph 读取的是 max_retries，这里显式同步，避免默认回落到 10 次重试。
+        cfg["max_retries"] = capped_retry
+        cfg["max_tokens"] = min(raw_max_tokens, self.BACKTEST_MAX_MODEL_TOKENS)
+
+        if (
+            cfg["timeout"] != raw_timeout or
+            cfg["max_retries"] != raw_retry or
+            cfg["max_tokens"] != raw_max_tokens
+        ):
+            logger.warning(
+                "⚙️ [回测模型限幅] %s timeout %s->%s, retries %s->%s, max_tokens %s->%s",
+                model_name,
+                raw_timeout,
+                cfg["timeout"],
+                raw_retry,
+                cfg["max_retries"],
+                raw_max_tokens,
+                cfg["max_tokens"],
+            )
+
+        return cfg
 
     def _pick_lightweight_analysts(self, selected_analysts: List[str]) -> List[str]:
         """从当前分析师集合中挑选轻量回测模式优先使用的子集"""
@@ -407,6 +451,129 @@ class BacktestEngine:
         因此仅复用明确的 BUY/SELL 方向信号。
         """
         return action in {TradeAction.BUY, TradeAction.SELL}
+
+    def _is_ai_failure_reason(self, reason: str) -> bool:
+        """识别 AI 分析失败原因，用于触发规则回退信号"""
+        text = (reason or "").strip()
+        if not text:
+            return False
+        failure_keywords = [
+            "AI分析超时",
+            "连续超时",
+            "AI引擎内部报错",
+            "API Key 缺失",
+            "RateLimitError",
+            "Too Many Requests",
+            "Request timed out",
+            "LLM响应为空",
+            "自动降级为 HOLD",
+        ]
+        return any(keyword in text for keyword in failure_keywords)
+
+    def _build_rule_fallback_decision(
+        self,
+        trading_days: List[str],
+        idx: int,
+        date_str: str,
+        current_price: float,
+        ai_reason: str,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        当 AI 出现超时/限流/报错时，使用轻量规则生成兜底交易信号，避免整段回测全 HOLD。
+        规则目标是“可执行 + 可收敛”，不是替代 AI 质量。
+        """
+        if current_price <= 0:
+            return None
+
+        def _price_of(day: str) -> Optional[float]:
+            value = self._stock_price_cache.get(day)
+            if value is None:
+                return None
+            try:
+                price = float(value)
+            except Exception:
+                return None
+            return price if price > 0 else None
+
+        prev_price = None
+        if idx > 0:
+            prev_price = _price_of(trading_days[idx - 1])
+
+        recent_prices: List[float] = []
+        start_idx = max(0, idx - self.RULE_FALLBACK_MA_WINDOW + 1)
+        for j in range(start_idx, idx + 1):
+            p = _price_of(trading_days[j])
+            if p is not None:
+                recent_prices.append(p)
+
+        ma_price = (sum(recent_prices) / len(recent_prices)) if recent_prices else current_price
+        change_pct = ((current_price - prev_price) / prev_price) if prev_price else 0.0
+        is_last_day = idx == len(trading_days) - 1
+
+        if self.position_shares == 0:
+            if (
+                idx == 0 or
+                change_pct >= self.RULE_FALLBACK_ENTRY_PCT or
+                current_price >= ma_price * (1 + self.RULE_FALLBACK_ENTRY_PCT)
+            ):
+                confidence = min(0.75, max(0.35, abs(change_pct) * 8 + 0.3))
+                return {
+                    "action": "BUY",
+                    "confidence": round(confidence, 4),
+                    "reasoning": (
+                        f"AI不可用触发规则回退买入: 日涨跌={change_pct:.2%}, "
+                        f"现价={current_price:.2f}, MA{len(recent_prices)}={ma_price:.2f}; "
+                        f"AI原因={ai_reason[:80]}"
+                    )
+                }
+            return {
+                "action": "HOLD",
+                "confidence": 0.2,
+                "reasoning": (
+                    f"AI不可用且规则未触发买入: 日涨跌={change_pct:.2%}, "
+                    f"现价={current_price:.2f}, MA{len(recent_prices)}={ma_price:.2f}"
+                )
+            }
+
+        # 有持仓时：末日主动平仓，或出现转弱信号时卖出
+        if (
+            is_last_day or
+            change_pct <= -self.RULE_FALLBACK_EXIT_PCT or
+            current_price <= ma_price * (1 - self.RULE_FALLBACK_EXIT_PCT)
+        ):
+            confidence = min(0.75, max(0.35, abs(change_pct) * 8 + 0.3))
+            extra = "末日平仓" if is_last_day else "转弱信号卖出"
+            return {
+                "action": "SELL",
+                "confidence": round(confidence, 4),
+                "reasoning": (
+                    f"AI不可用触发规则回退卖出({extra}): 日涨跌={change_pct:.2%}, "
+                    f"现价={current_price:.2f}, MA{len(recent_prices)}={ma_price:.2f}; "
+                    f"AI原因={ai_reason[:80]}"
+                )
+            }
+
+        return {
+            "action": "HOLD",
+            "confidence": 0.2,
+            "reasoning": (
+                f"AI不可用且持仓规则未触发卖出: 日涨跌={change_pct:.2%}, "
+                f"现价={current_price:.2f}, MA{len(recent_prices)}={ma_price:.2f}"
+            )
+        }
+
+    def _enable_rule_mode(self, reason: str, date_str: str) -> None:
+        """启用规则模式：后续不再调用 AI，直接使用可执行规则信号完成回测。"""
+        if self._rule_mode_enabled:
+            return
+        self._rule_mode_enabled = True
+        self._rule_mode_reason = reason or "AI稳定性不足"
+        logger.warning(
+            "⛑️ [回测规则模式] %s %s 触发规则模式，后续日期改为规则信号以避免持续超时/限流。原因: %s",
+            self.config.symbol,
+            date_str,
+            self._rule_mode_reason[:160],
+        )
 
     async def _get_trading_calendar(self, start_date: str, end_date: str) -> List[str]:
         """
@@ -709,6 +876,7 @@ class BacktestEngine:
                     "temperature": llm_config.temperature,
                     "timeout": llm_config.timeout,
                     "retry_times": llm_config.retry_times,
+                    "max_retries": llm_config.retry_times,
                     "api_base": llm_config.api_base,
                 }
             if llm_config.model_name == deep_model:
@@ -717,8 +885,12 @@ class BacktestEngine:
                     "temperature": llm_config.temperature,
                     "timeout": llm_config.timeout,
                     "retry_times": llm_config.retry_times,
+                    "max_retries": llm_config.retry_times,
                     "api_base": llm_config.api_base,
                 }
+
+        quick_model_config = self._sanitize_backtest_model_config(quick_model, quick_model_config)
+        deep_model_config = self._sanitize_backtest_model_config(deep_model, deep_model_config)
 
         quick_provider_info = get_provider_and_url_by_model_sync(quick_model)
         deep_provider_info = get_provider_and_url_by_model_sync(deep_model)
@@ -920,7 +1092,8 @@ class BacktestEngine:
             "days_price_none": 0,
             "ai_buy": 0, "ai_sell": 0, "ai_hold": 0,
             "exec_buy": 0, "exec_sell": 0, "exec_abort_buy": 0, "exec_abort_sell": 0,
-            "hold_reasons": []
+            "hold_reasons": [],
+            "rule_fallback_used": 0,
         }
         decision_interval_days = max(1, int(self.config.decision_interval_days or 1))
         last_decision: Dict[str, Any] = {}
@@ -954,8 +1127,55 @@ class BacktestEngine:
 
             # 3c. 执行 AI 分析
             if should_run_ai:
-                decision = await self._run_ai_analysis(self.config.symbol, date_str)
-                action, confidence, reason = self._parse_ai_decision(decision)
+                if self._rule_mode_enabled:
+                    fallback_decision = self._build_rule_fallback_decision(
+                        trading_days=trading_days,
+                        idx=idx,
+                        date_str=date_str,
+                        current_price=price,
+                        ai_reason=f"规则模式已启用: {self._rule_mode_reason[:120]}",
+                    ) or {
+                        "action": "HOLD",
+                        "confidence": 0.2,
+                        "reasoning": f"规则模式启用但无可用价格结构，保持观望: {self._rule_mode_reason[:120]}",
+                    }
+                    decision = fallback_decision
+                    action, confidence, reason = self._parse_ai_decision(decision)
+                    self._rule_fallback_used += 1
+                    diagnostic_stats["rule_fallback_used"] += 1
+                else:
+                    decision = await self._run_ai_analysis(self.config.symbol, date_str)
+                    action, confidence, reason = self._parse_ai_decision(decision)
+                    if self._is_ai_failure_reason(reason):
+                        self._consecutive_ai_failures += 1
+                        fallback_decision = self._build_rule_fallback_decision(
+                            trading_days=trading_days,
+                            idx=idx,
+                            date_str=date_str,
+                            current_price=price,
+                            ai_reason=reason,
+                        )
+                        if fallback_decision:
+                            fb_action, fb_confidence, fb_reason = self._parse_ai_decision(fallback_decision)
+                            if fb_action != action or "规则回退" in fb_reason:
+                                logger.warning(
+                                    "⚠️ [回测规则回退] %s %s AI=%s -> FB=%s (%s)",
+                                    self.config.symbol,
+                                    date_str,
+                                    action.value,
+                                    fb_action.value,
+                                    fb_reason[:120],
+                                )
+                                action = fb_action
+                                confidence = fb_confidence
+                                reason = fb_reason
+                                decision = fallback_decision
+                                self._rule_fallback_used += 1
+                                diagnostic_stats["rule_fallback_used"] += 1
+                        if self._consecutive_ai_failures >= self.MAX_CONSECUTIVE_AI_FAILURES_BEFORE_RULE_MODE:
+                            self._enable_rule_mode(reason, date_str)
+                    else:
+                        self._consecutive_ai_failures = 0
                 last_decision = decision or {}
                 last_decision_action = action
                 last_decision_confidence = confidence
@@ -1010,7 +1230,7 @@ class BacktestEngine:
             diag_str = f"🛑 回测0交易诊断: 总单={diagnostic_stats['days_total']}, 无价格={diagnostic_stats['days_price_none']}, " \
                        f"AI买入={diagnostic_stats['ai_buy']}(执行失败={diagnostic_stats['exec_abort_buy']}), " \
                        f"AI卖出={diagnostic_stats['ai_sell']}(执行失败={diagnostic_stats['exec_abort_sell']}), " \
-                       f"AI持有={diagnostic_stats['ai_hold']}次。持有原因摘录: {reasons_str}"
+                       f"AI持有={diagnostic_stats['ai_hold']}次, 规则回退触发={diagnostic_stats['rule_fallback_used']}次。持有原因摘录: {reasons_str}"
             logger.error(diag_str)
             # 把诊断信息写到一条 fake trade 记录中，方便前端直接看到
             self.trades.append(TradeRecord(
