@@ -51,6 +51,8 @@ class USDataSource(Enum):
     FINNHUB = DataSourceCode.FINNHUB  # Finnhub（备用数据源）
 
 
+DEFAULT_TUSHARE_ENDPOINT = "http://api.tushare.pro"
+
 
 
 
@@ -115,12 +117,24 @@ class DataSourceManager:
 
             if config_data and config_data.get('data_source_configs'):
                 data_source_configs = config_data.get('data_source_configs', [])
+                env_tushare_override = self._get_env_tushare_override()
 
                 # 🔥 过滤出启用的数据源，并按市场分类过滤
                 enabled_sources = []
+                tushare_added_by_env_override = False
                 for ds in data_source_configs:
-                    if not ds.get('enabled', True):
-                        continue
+                    ds_type = ds.get('type', '').lower()
+                    is_enabled = ds.get('enabled', True)
+                    if not is_enabled:
+                        if ds_type == DataSourceCode.TUSHARE and env_tushare_override:
+                            is_enabled = True
+                            tushare_added_by_env_override = True
+                            logger.info(
+                                "ℹ️ [数据源优先级] 检测到第三方 Tushare endpoint，"
+                                "忽略数据库中的 tushare disabled 配置"
+                            )
+                        else:
+                            continue
 
                     # 检查数据源是否属于当前市场分类
                     market_categories = ds.get('market_categories', [])
@@ -130,6 +144,21 @@ class DataSourceManager:
                             continue
 
                     enabled_sources.append(ds)
+
+                if (
+                    env_tushare_override
+                    and not tushare_added_by_env_override
+                    and market_category in (None, 'a_shares')
+                ):
+                    enabled_sources.append({
+                        'type': DataSourceCode.TUSHARE,
+                        'priority': 0,
+                        'enabled': True,
+                    })
+                    logger.info(
+                        "ℹ️ [数据源优先级] 数据库未提供可用的 tushare 条目，"
+                        "已根据 .env 第三方配置补充到降级顺序"
+                    )
 
                 # 按优先级排序（数字越大优先级越高）
                 enabled_sources.sort(key=lambda x: x.get('priority', 0), reverse=True)
@@ -169,6 +198,37 @@ class DataSourceManager:
         ]
         # 只返回可用的数据源
         return [s for s in default_order if s in self.available_sources]
+
+    def _is_valid_api_key(self, value: Optional[str]) -> bool:
+        """判断 API Key 是否为有效的非占位符值"""
+        if not isinstance(value, str):
+            return False
+
+        token = value.strip()
+        return bool(token and not token.startswith("your_"))
+
+    def _get_env_tushare_override(self) -> Optional[Dict[str, str]]:
+        """
+        检测 .env 中是否启用了第三方 Tushare 配置。
+
+        兼容规则：
+        - 只有当 TUSHARE_ENDPOINT 为非官方地址时，才认为需要绕过数据库中的旧开关
+        - token 与 endpoint 必须成对有效，否则不启用覆盖
+        """
+        endpoint = (os.getenv('TUSHARE_ENDPOINT') or '').strip()
+        token = (os.getenv('TUSHARE_TOKEN') or '').strip()
+
+        if not endpoint or endpoint == DEFAULT_TUSHARE_ENDPOINT:
+            return None
+
+        if not self._is_valid_api_key(token):
+            logger.warning("⚠️ 检测到自定义 TUSHARE_ENDPOINT，但 TUSHARE_TOKEN 无效，跳过第三方 Tushare 覆盖")
+            return None
+
+        return {
+            'endpoint': endpoint,
+            'token': token,
+        }
 
     def _identify_market_category(self, symbol: Optional[str]) -> Optional[str]:
         """
@@ -414,6 +474,7 @@ class DataSourceManager:
 
         # 🔥 从数据库读取数据源配置，获取启用状态
         enabled_sources_in_db = set()
+        env_tushare_override = self._get_env_tushare_override()
         try:
             from app.core.database import get_mongo_db_sync
             db = get_mongo_db_sync()
@@ -430,9 +491,15 @@ class DataSourceManager:
 
                 # 提取已启用的数据源类型
                 for ds in data_source_configs:
+                    ds_type = ds.get('type', '').lower()
                     if ds.get('enabled', True):
-                        ds_type = ds.get('type', '').lower()
                         enabled_sources_in_db.add(ds_type)
+                    elif ds_type == DataSourceCode.TUSHARE and env_tushare_override:
+                        enabled_sources_in_db.add(ds_type)
+                        logger.info(
+                            "ℹ️ [数据源配置] 检测到第三方 Tushare endpoint，"
+                            "按 .env 覆盖启用 Tushare"
+                        )
 
                 logger.info(f"✅ [数据源配置] 从数据库读取到已启用的数据源: {enabled_sources_in_db}")
             else:
@@ -466,11 +533,15 @@ class DataSourceManager:
         if 'tushare' in enabled_sources_in_db:
             try:
                 import tushare as ts
-                # 优先从数据库配置读取 API Key，其次从环境变量读取
-                token = datasource_configs.get('tushare', {}).get('api_key') or os.getenv('TUSHARE_TOKEN')
-                if token:
-                    available.append(ChinaDataSource.TUSHARE)
+                if env_tushare_override:
+                    token = env_tushare_override['token']
+                    source = f"环境变量(第三方endpoint: {env_tushare_override['endpoint']})"
+                else:
+                    # 优先从数据库配置读取 API Key，其次从环境变量读取
+                    token = datasource_configs.get('tushare', {}).get('api_key') or os.getenv('TUSHARE_TOKEN')
                     source = "数据库配置" if datasource_configs.get('tushare', {}).get('api_key') else "环境变量"
+                if self._is_valid_api_key(token):
+                    available.append(ChinaDataSource.TUSHARE)
                     logger.info(f"✅ Tushare数据源可用且已启用 (API Key来源: {source})")
                 else:
                     logger.warning("⚠️ Tushare数据源不可用: API Key未配置（数据库和环境变量均未找到）")
@@ -523,11 +594,12 @@ class DataSourceManager:
             # 构建配置字典 {数据源名称: {api_key, api_secret, ...}}
             result = {}
             for ds_config in datasource_configs:
-                name = ds_config.get('name', '').lower()
+                name = (ds_config.get('name') or ds_config.get('type') or '').lower()
                 result[name] = {
                     'api_key': ds_config.get('api_key', ''),
                     'api_secret': ds_config.get('api_secret', ''),
-                    'config_params': ds_config.get('config_params', {})
+                    'config_params': ds_config.get('config_params', {}),
+                    'endpoint': ds_config.get('endpoint', ''),
                 }
 
             return result

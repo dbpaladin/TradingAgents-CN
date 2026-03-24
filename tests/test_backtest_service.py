@@ -432,6 +432,67 @@ class TestBacktestModelRouting:
 
         assert engine._compute_analysis_timeout_seconds() == 1800
 
+    def test_get_analysis_runtime_tightens_backtest_rounds_and_memory(self):
+        from app.services.backtest_service import BacktestEngine
+
+        task = make_test_task()
+        task.config.research_depth = "深度"
+        task.config.selected_analysts = ["market", "fundamentals", "news"]
+        engine = BacktestEngine(task)
+
+        fake_unified_config = SimpleNamespace(
+            get_quick_analysis_model=lambda: "qwen-turbo",
+            get_deep_analysis_model=lambda: "qwen-max",
+            get_llm_configs=lambda: [],
+        )
+
+        with patch("app.core.unified_config.unified_config", fake_unified_config), \
+             patch("app.services.simple_analysis_service.create_analysis_config", return_value={
+                 "memory_enabled": True,
+                 "max_debate_rounds": 2,
+                 "max_risk_discuss_rounds": 2,
+                 "online_tools": False,
+             }), \
+             patch("app.services.simple_analysis_service.get_provider_and_url_by_model_sync") as mock_provider_lookup:
+            mock_provider_lookup.side_effect = [
+                {
+                    "provider": "dashscope",
+                    "backend_url": "https://dashscope.aliyuncs.com/api/v1",
+                    "api_key": "sk-quick",
+                },
+                {
+                    "provider": "dashscope",
+                    "backend_url": "https://dashscope.aliyuncs.com/api/v1",
+                    "api_key": "sk-deep",
+                },
+            ]
+            runtime = engine._get_analysis_runtime()
+
+        assert runtime["config"]["memory_enabled"] is False
+        assert runtime["config"]["max_debate_rounds"] == 1
+        assert runtime["config"]["max_risk_discuss_rounds"] == 1
+        assert runtime["config"]["online_tools"] is True
+
+    def test_should_start_in_degraded_mode_for_long_high_load_backtest(self):
+        from app.services.backtest_service import BacktestEngine
+
+        task = make_test_task()
+        task.config.selected_analysts = [
+            "market",
+            "fundamentals",
+            "sentiment",
+            "news",
+            "institutional_theme",
+        ]
+        engine = BacktestEngine(task)
+        engine._analysis_runtime = {
+            "selected_analysts": task.config.selected_analysts,
+        }
+
+        trading_days = [f"2024-03-{day:02d}" for day in range(1, 22)]
+
+        assert engine._should_start_in_degraded_mode(trading_days) is True
+
     @pytest.mark.asyncio
     async def test_run_ai_analysis_reuses_graph_in_fast_mode(self):
         from app.services.backtest_service import BacktestEngine
@@ -703,7 +764,7 @@ class TestBacktestRuleFallback:
         assert TradeAction.SELL in executed_actions
 
     @pytest.mark.asyncio
-    async def test_run_entry_guardrail_breaks_flat_sell_hold_deadlock(self):
+    async def test_run_does_not_force_buy_when_no_entry_signal_exists(self):
         from app.services.backtest_service import BacktestEngine
 
         task = make_test_task(start_date="2024-03-01", end_date="2024-03-05")
@@ -738,10 +799,9 @@ class TestBacktestRuleFallback:
         result = await engine.run()
 
         executed_actions = [t.action for t in result.trades if t.executed]
-        assert TradeAction.BUY in executed_actions
-        assert TradeAction.SELL in executed_actions
-        assert all(t.ai_signal != "DIAGNOSTIC" for t in result.trades)
-        assert any("入场保护" in (t.ai_reason or "") for t in result.trades)
+        assert TradeAction.BUY not in executed_actions
+        assert TradeAction.SELL not in executed_actions
+        assert any(t.ai_signal == "DIAGNOSTIC" for t in result.trades)
 
     @pytest.mark.asyncio
     async def test_run_records_model_and_step_elapsed_in_trade_details(self):

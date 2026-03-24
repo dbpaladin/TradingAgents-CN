@@ -59,6 +59,7 @@ def test_fund_flow_summary_detects_positive_capital_signals():
     assert summary.institutional_signal == "机构席位偏多"
     assert summary.northbound_signal == "北向资金偏增持"
     assert summary.margin_signal == "融资情绪偏暖"
+    assert summary.evidence_completeness_score == 100.0
     assert "龙虎榜" in "".join(summary.evidence)
 
 
@@ -72,4 +73,20 @@ def test_fund_flow_report_contains_core_sections():
     assert "A股资金面分析" in report
     assert "目标股资金画像" in report
     assert "龙虎榜与短线资金" in report
+    assert "数据缺口与解释边界" in report
     assert "结构化摘要(JSON)" in report
+
+
+def test_fund_flow_summary_marks_missing_data_as_gap_not_bearish():
+    analyzer = AShareFundFlowAnalyzer(FakeAK())
+    data = analyzer.collect("2026-03-21")
+
+    summary = analyzer.build_summary("000001.SZ", "2026-03-21", data)
+
+    assert summary.evidence_completeness_score < 100
+    assert "主力资金明细" in summary.missing_evidence
+    assert "北向持股变动" in summary.missing_evidence
+    assert "融资融券明细" in summary.missing_evidence
+    assert "只应降低置信度" in summary.data_quality_note
+    assert summary.northbound_signal.startswith("北向数据未命中")
+    assert summary.margin_signal == "融资融券数据缺失或当日未更新"

@@ -372,8 +372,8 @@
               </el-table-column>
               <el-table-column label="推理耗时" width="170">
                 <template #default="{ row }">
-                  <div>推理: {{ formatMs(row.analysis_elapsed_ms) }}</div>
-                  <div>总计: {{ formatMs(row.day_elapsed_ms) }}</div>
+                  <div>推理: {{ formatDuration(row.analysis_elapsed_ms) }}</div>
+                  <div>总计: {{ formatDuration(row.day_elapsed_ms) }}</div>
                 </template>
               </el-table-column>
               <el-table-column prop="total_assets" label="总资产" width="110">
@@ -413,12 +413,12 @@
                   <el-tag size="small" type="warning" style="margin-left: 6px">{{ row.ai_runtime_mode || '-' }}</el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="分步耗时(ms)" width="280">
+              <el-table-column label="分步耗时" width="280">
                 <template #default="{ row }">
-                  <div>推理: {{ formatMs(row.analysis_elapsed_ms) }}</div>
-                  <div>决策: {{ formatMs(row.decision_elapsed_ms) }}</div>
-                  <div>执行: {{ formatMs(row.execution_elapsed_ms) }}</div>
-                  <div>当日总计: {{ formatMs(row.day_elapsed_ms) }}</div>
+                  <div>推理: {{ formatDuration(row.analysis_elapsed_ms) }}</div>
+                  <div>决策: {{ formatDuration(row.decision_elapsed_ms) }}</div>
+                  <div>执行: {{ formatDuration(row.execution_elapsed_ms) }}</div>
+                  <div>当日总计: {{ formatDuration(row.day_elapsed_ms) }}</div>
                 </template>
               </el-table-column>
               <el-table-column prop="ai_reason" label="推理摘要" show-overflow-tooltip />
@@ -558,9 +558,19 @@ function formatMoney(val: number) {
   return val.toFixed(2)
 }
 
-function formatMs(val?: number | null) {
+function formatDuration(val?: number | null) {
   if (val === null || val === undefined || Number.isNaN(val)) return '-'
-  return `${Number(val).toFixed(1)}ms`
+  const ms = Number(val)
+  if (ms < 1000) return `${ms.toFixed(1)}ms`
+
+  const seconds = ms / 1000
+  if (seconds < 60) return `${seconds.toFixed(2)}s`
+
+  const minutes = seconds / 60
+  if (minutes < 60) return `${minutes.toFixed(2)}分钟`
+
+  const hours = minutes / 60
+  return `${hours.toFixed(2)}小时`
 }
 
 function modelLabel(model: LLMConfig) {

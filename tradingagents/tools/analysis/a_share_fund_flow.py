@@ -106,7 +106,11 @@ class AShareFundFlowSummary:
     margin_signal: str
     market_liquidity_score: float
     risk_flag: str
+    evidence_completeness_score: float
+    evidence_completeness_label: str
+    data_quality_note: str
     evidence: List[str]
+    missing_evidence: List[str]
     target_metrics: Dict[str, Any]
 
 
@@ -270,6 +274,7 @@ class AShareFundFlowAnalyzer:
         moneyflow_row = self._extract_moneyflow_row(ticker, data)
         margin_row = self._extract_margin_row(ticker, data)
         hk_hold_row = self._extract_hk_hold_row(ticker, data)
+        symbol = _normalize_symbol(ticker)
 
         lhb_count = _to_int(lhb_row.get("上榜次数"), 0) if not lhb_row.empty else 0
         lhb_net_amount = _to_float(lhb_row.get("龙虎榜净买额"), 0.0) if not lhb_row.empty else 0.0
@@ -333,21 +338,30 @@ class AShareFundFlowAnalyzer:
         )
 
         evidence: List[str] = []
+        missing_evidence: List[str] = []
         if lhb_count > 0:
             evidence.append(f"近一月龙虎榜上榜 {lhb_count} 次")
+        else:
+            missing_evidence.append("龙虎榜上榜记录")
         if abs(lhb_net_amount) > 0:
             direction = "净流入" if lhb_net_amount > 0 else "净流出"
             evidence.append(f"龙虎榜口径 {direction} {lhb_net_amount:,.0f}")
         if abs(main_net_amount) > 0:
             direction = "流入" if main_net_amount > 0 else "流出"
             evidence.append(f"主力资金口径 {direction} {main_net_amount:,.0f}")
+        elif moneyflow_row.empty:
+            missing_evidence.append("主力资金明细")
         if abs(northbound_change) > 0:
             direction = "增持" if northbound_change > 0 else "减持"
             evidence.append(f"北向持股变动显示 {direction}")
+        elif hk_hold_row.empty:
+            missing_evidence.append("北向持股变动")
         if financing_change > 0:
             evidence.append("融资侧偏积极")
         elif financing_change < 0:
             evidence.append("融资侧偏谨慎")
+        elif margin_row.empty:
+            missing_evidence.append("融资融券明细")
         if stock_status != "普通状态":
             evidence.append(f"个股位于{stock_status}")
         if not evidence:
@@ -366,15 +380,19 @@ class AShareFundFlowAnalyzer:
             northbound_signal = "北向资金偏增持"
         elif northbound_change < 0:
             northbound_signal = "北向资金偏减持"
+        elif hk_hold_row.empty:
+            northbound_signal = "北向数据未命中（可能为非互联互通标的、当日未披露或接口缺失）"
         else:
-            northbound_signal = "北向资金信号暂不明显"
+            northbound_signal = "北向资金当日变动接近中性"
 
         if financing_change > 0 and securities_change >= 0:
             margin_signal = "融资情绪偏暖"
         elif financing_change < 0 or securities_change > 0:
             margin_signal = "融资融券情绪偏谨慎"
+        elif margin_row.empty:
+            margin_signal = "融资融券数据缺失或当日未更新"
         else:
-            margin_signal = "融资融券数据有限"
+            margin_signal = "融资融券信号中性"
 
         if lhb_net_amount > 0 and main_net_amount > 0 and stock_status in {"涨停池", "强势股池"}:
             capital_style = "游资接力与增量资金共振"
@@ -405,7 +423,38 @@ class AShareFundFlowAnalyzer:
             "financing_change": round(financing_change, 2),
             "institutional_buy_times": institutional_buy_times,
             "institutional_sell_times": institutional_sell_times,
+            "has_lhb_record": not lhb_row.empty,
+            "has_moneyflow_record": not moneyflow_row.empty,
+            "has_margin_record": not margin_row.empty,
+            "has_northbound_record": not hk_hold_row.empty,
+            "symbol": symbol,
         }
+
+        available_slots = sum(
+            [
+                int(not lhb_row.empty),
+                int(not moneyflow_row.empty),
+                int(not margin_row.empty),
+                int(not hk_hold_row.empty),
+            ]
+        )
+        evidence_completeness_score = round(available_slots / 4 * 100, 2)
+        if evidence_completeness_score >= 75:
+            evidence_completeness_label = "高"
+        elif evidence_completeness_score >= 50:
+            evidence_completeness_label = "中"
+        else:
+            evidence_completeness_label = "低"
+
+        if missing_evidence:
+            data_quality_note = (
+                "存在资金证据缺口："
+                + "、".join(missing_evidence)
+                + "。这些缺口只应降低置信度，不能直接等同于资金偏空；"
+                  "若已有龙虎榜/主力资金正负方向信号，应与缺口信息分开表述。"
+            )
+        else:
+            data_quality_note = "关键资金证据较完整，可将资金面结论作为较高权重参考。"
 
         return AShareFundFlowSummary(
             trade_date=trade_date,
@@ -420,7 +469,11 @@ class AShareFundFlowAnalyzer:
             margin_signal=margin_signal,
             market_liquidity_score=liquidity_score,
             risk_flag=risk_flag,
+            evidence_completeness_score=evidence_completeness_score,
+            evidence_completeness_label=evidence_completeness_label,
+            data_quality_note=data_quality_note,
             evidence=evidence,
+            missing_evidence=missing_evidence,
             target_metrics=target_metrics,
         )
 
@@ -437,6 +490,7 @@ class AShareFundFlowAnalyzer:
             f"- 股票代码: **{summary.ticker}**",
             f"- 当前状态: **{summary.stock_status}**",
             f"- 市场流动性评分: **{summary.market_liquidity_score}/100**",
+            f"- 资金证据完整度: **{summary.evidence_completeness_score}/100 ({summary.evidence_completeness_label})**",
             f"- 机构信号: **{summary.institutional_signal}**",
             f"- 北向信号: **{summary.northbound_signal}**",
             f"- 融资融券信号: **{summary.margin_signal}**",
@@ -450,6 +504,18 @@ class AShareFundFlowAnalyzer:
 
         for item in summary.evidence:
             lines.append(f"- {item}")
+
+        lines.extend(
+            [
+                "",
+                "### 数据缺口与解释边界",
+                f"- {summary.data_quality_note}",
+            ]
+        )
+        if summary.missing_evidence:
+            lines.append(f"- 当前缺失项: **{' / '.join(summary.missing_evidence)}**")
+        else:
+            lines.append("- 当前缺失项: **无明显关键缺口**")
 
         lines.extend(
             [

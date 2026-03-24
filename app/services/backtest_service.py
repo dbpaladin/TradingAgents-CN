@@ -67,7 +67,7 @@ class BacktestEngine:
     MAX_ANALYSIS_TIMEOUT_SECONDS = 1800
     LIGHTWEIGHT_MAX_MODEL_TIMEOUT_SECONDS = 90
     LIGHTWEIGHT_MIN_MODEL_TIMEOUT_SECONDS = 30
-    LIGHTWEIGHT_MAX_ANALYSTS = 2
+    LIGHTWEIGHT_MAX_ANALYSTS = 3
     BACKTEST_MAX_MODEL_TIMEOUT_SECONDS = 120
     BACKTEST_MAX_MODEL_RETRIES = 2
     BACKTEST_MAX_MODEL_TOKENS = 12000
@@ -76,10 +76,8 @@ class BacktestEngine:
     RULE_FALLBACK_EXIT_PCT = 0.003
     MAX_CONSECUTIVE_TIMEOUTS_BEFORE_DISABLE = 2
     MAX_CONSECUTIVE_AI_FAILURES_BEFORE_RULE_MODE = 1
-    # 避免整段空仓无交易：连续 N 天空仓且无 BUY 信号后，触发入场保护
-    FORCE_ENTRY_AFTER_NO_BUY_DAYS = 2
-    # 仅在剩余交易日足够时启用入场保护，避免最后一天“被动开仓”
-    FORCE_ENTRY_MIN_REMAINING_DAYS = 2
+    PROACTIVE_DEGRADE_TRADING_DAYS = 20
+    PROACTIVE_DEGRADE_ANALYST_WEIGHT = 5
 
     def __init__(self, task: BacktestTask, progress_callback=None):
         self.task = task
@@ -269,6 +267,37 @@ class BacktestEngine:
             "quick_backend_url": quick_backend_url,
             "deep_backend_url": quick_backend_url,
         }
+
+    def _apply_backtest_runtime_constraints(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """回测场景统一收敛配置，优先保证可执行性与吞吐。"""
+        adjusted = dict(config or {})
+        adjusted["memory_enabled"] = False
+        adjusted["max_debate_rounds"] = min(int(adjusted.get("max_debate_rounds", 1) or 1), 1)
+        adjusted["max_risk_discuss_rounds"] = min(int(adjusted.get("max_risk_discuss_rounds", 1) or 1), 1)
+        adjusted["online_tools"] = True
+        return adjusted
+
+    def _estimate_runtime_analyst_weight(self, analysts: List[str]) -> int:
+        """估算当前分析师组合在回测场景中的实际负载。"""
+        unique_analysts = {str(name).strip() for name in (analysts or []) if str(name).strip()}
+        if not unique_analysts:
+            return 1
+        weight = len(unique_analysts)
+        if "sentiment" in unique_analysts:
+            weight += 2
+        if "news" in unique_analysts:
+            weight += 1
+        return weight
+
+    def _should_start_in_degraded_mode(self, trading_days: List[str]) -> bool:
+        """长区间或高负载组合在回测中优先进入轻量模式，避免首日即超时。"""
+        runtime = self._get_analysis_runtime()
+        analysts = runtime.get("selected_analysts") or self.config.selected_analysts or []
+        analyst_weight = self._estimate_runtime_analyst_weight(analysts)
+        return (
+            len(trading_days) >= self.PROACTIVE_DEGRADE_TRADING_DAYS
+            or analyst_weight >= self.PROACTIVE_DEGRADE_ANALYST_WEIGHT
+        )
 
     def _get_active_analysis_runtime(self) -> Dict[str, Any]:
         """获取当前分析模式对应的运行时配置"""
@@ -487,68 +516,6 @@ class BacktestEngine:
             normalized_reason = f"{safe_reason} [执行纠偏: 已有持仓，BUY转HOLD]"
             return TradeAction.HOLD, normalized_reason[:200]
         return action, safe_reason[:200]
-
-    def _maybe_force_entry_when_stuck(
-        self,
-        trading_days: List[str],
-        idx: int,
-        date_str: str,
-        current_price: float,
-        action: TradeAction,
-        confidence: float,
-        reason: str,
-        flat_no_entry_streak: int,
-        executed_buy_count: int,
-    ) -> Tuple[TradeAction, float, str, bool]:
-        """
-        连续空仓且没有买入时触发入场保护，避免整段回测 0 交易。
-        Returns: (action, confidence, reason, used_rule_fallback)
-        """
-        if self.position_shares > 0 or action == TradeAction.BUY:
-            return action, confidence, reason, False
-        if executed_buy_count > 0:
-            return action, confidence, reason, False
-
-        remaining_days = len(trading_days) - idx
-        if remaining_days < self.FORCE_ENTRY_MIN_REMAINING_DAYS:
-            return action, confidence, reason, False
-        if flat_no_entry_streak < self.FORCE_ENTRY_AFTER_NO_BUY_DAYS:
-            return action, confidence, reason, False
-
-        fallback_reason = f"连续{flat_no_entry_streak}天空仓无买入，触发入场保护"
-        fallback_decision = self._build_rule_fallback_decision(
-            trading_days=trading_days,
-            idx=idx,
-            date_str=date_str,
-            current_price=current_price,
-            ai_reason=fallback_reason,
-        )
-        if fallback_decision:
-            fb_action, fb_confidence, fb_reason = self._parse_ai_decision(fallback_decision)
-            if fb_action == TradeAction.BUY:
-                logger.warning(
-                    "🛟 [入场保护-规则回退] %s %s 连续空仓=%s，%s -> BUY",
-                    self.config.symbol,
-                    date_str,
-                    flat_no_entry_streak,
-                    action.value,
-                )
-                return TradeAction.BUY, fb_confidence, f"{fb_reason} [入场保护]", True
-
-        # 规则信号未给出 BUY 时，执行最小强度的保底入场。
-        forced_confidence = max(float(confidence or 0.0), 0.25)
-        forced_reason = (
-            f"入场保护触发: 连续{flat_no_entry_streak}天空仓且无买入信号，"
-            f"为避免整段0交易，将信号从{action.value}调整为BUY"
-        )
-        logger.warning(
-            "🛟 [入场保护-强制买入] %s %s 连续空仓=%s，%s -> BUY",
-            self.config.symbol,
-            date_str,
-            flat_no_entry_streak,
-            action.value,
-        )
-        return TradeAction.BUY, forced_confidence, forced_reason[:200], False
 
     def _is_ai_failure_reason(self, reason: str) -> bool:
         """识别 AI 分析失败原因，用于触发规则回退信号"""
@@ -1005,6 +972,7 @@ class BacktestEngine:
             quick_model_config=quick_model_config,
             deep_model_config=deep_model_config,
         )
+        config = self._apply_backtest_runtime_constraints(config)
         config["quick_provider"] = quick_provider
         config["deep_provider"] = deep_provider
         config["quick_backend_url"] = quick_provider_info["backend_url"]
@@ -1176,6 +1144,10 @@ class BacktestEngine:
         # 1c. 提前初始化分析运行时，尽早触发模型配置校验
         await self._update_progress(5, trading_days[0], "🤖 初始化AI分析引擎...")
         self._get_analysis_runtime()
+        if self._should_start_in_degraded_mode(trading_days):
+            self._switch_to_degraded_mode(
+                f"回测跨度={len(trading_days)}天/分析负载较高，预先切换轻量模式以避免首轮超时"
+            )
 
         # 2. 获取基准起始价格（用于计算基准收益率）
         benchmark_start_price: Optional[float] = None
@@ -1192,9 +1164,7 @@ class BacktestEngine:
             "exec_buy": 0, "exec_sell": 0, "exec_abort_buy": 0, "exec_abort_sell": 0,
             "hold_reasons": [],
             "rule_fallback_used": 0,
-            "flat_no_entry_streak": 0,
             "position_normalizations": 0,
-            "entry_guardrail_used": 0,
         }
         decision_interval_days = max(1, int(self.config.decision_interval_days or 1))
         last_decision: Dict[str, Any] = {}
@@ -1324,42 +1294,6 @@ class BacktestEngine:
                 )
                 action = normalized_action
                 reason = normalized_reason
-
-            # 3c.2 空仓连续无买入时触发入场保护，防止整段 0 交易
-            if self.position_shares == 0 and action != TradeAction.BUY:
-                diagnostic_stats["flat_no_entry_streak"] += 1
-            else:
-                diagnostic_stats["flat_no_entry_streak"] = 0
-
-            guarded_action, guarded_confidence, guarded_reason, used_rule_fallback = self._maybe_force_entry_when_stuck(
-                trading_days=trading_days,
-                idx=idx,
-                date_str=date_str,
-                current_price=price,
-                action=action,
-                confidence=confidence,
-                reason=reason,
-                flat_no_entry_streak=diagnostic_stats["flat_no_entry_streak"],
-                executed_buy_count=diagnostic_stats["exec_buy"],
-            )
-            if guarded_action != action:
-                diagnostic_stats["entry_guardrail_used"] += 1
-                logger.info(
-                    "🔧 [入场保护] %s %s %s -> %s",
-                    self.config.symbol,
-                    date_str,
-                    action.value,
-                    guarded_action.value,
-                )
-                action = guarded_action
-                confidence = guarded_confidence
-                reason = guarded_reason
-                if action == TradeAction.BUY:
-                    # 改写为 BUY 后，重置连续空仓无买入计数
-                    diagnostic_stats["flat_no_entry_streak"] = 0
-            if used_rule_fallback:
-                self._rule_fallback_used += 1
-                diagnostic_stats["rule_fallback_used"] += 1
             decision_elapsed_ms = (time.perf_counter() - decision_started_at) * 1000
 
             # 3d. T+1 限制检查
@@ -1427,7 +1361,7 @@ class BacktestEngine:
                        f"AI买入={diagnostic_stats['ai_buy']}(执行失败={diagnostic_stats['exec_abort_buy']}), " \
                        f"AI卖出={diagnostic_stats['ai_sell']}(执行失败={diagnostic_stats['exec_abort_sell']}), " \
                        f"AI持有={diagnostic_stats['ai_hold']}次, 规则回退触发={diagnostic_stats['rule_fallback_used']}次, " \
-                       f"执行前信号纠偏={diagnostic_stats['position_normalizations']}次, 入场保护触发={diagnostic_stats['entry_guardrail_used']}次。持有原因摘录: {reasons_str}"
+                       f"执行前信号纠偏={diagnostic_stats['position_normalizations']}次。持有原因摘录: {reasons_str}"
             logger.error(diag_str)
             # 把诊断信息写到一条 fake trade 记录中，方便前端直接看到
             self.trades.append(TradeRecord(
