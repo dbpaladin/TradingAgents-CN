@@ -430,9 +430,21 @@ export const configApi = {
 
   // 获取默认模型配置
   getDefaultModels(): Promise<{ quick_analysis_model: string; deep_analysis_model: string }> {
-    return ApiClient.get('/api/config/settings').then(settings => ({
-      quick_analysis_model: settings.quick_analysis_model || settings.default_llm || settings.default_model || 'qwen-turbo',
-      deep_analysis_model: settings.deep_analysis_model || settings.default_llm || settings.default_model || 'qwen-max'
+    return ApiClient.get('/api/config/settings').then((settings: any) => ({
+      quick_analysis_model:
+        settings.quick_analysis_model ||
+        settings.quick_think_llm ||
+        settings.default_llm ||
+        settings.default_model ||
+        'qwen-turbo',
+      deep_analysis_model:
+        settings.deep_analysis_model ||
+        settings.deep_think_llm ||
+        settings.default_llm ||
+        settings.default_model ||
+        settings.quick_analysis_model ||
+        settings.quick_think_llm ||
+        'qwen-max'
     }))
   },
 

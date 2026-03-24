@@ -58,6 +58,21 @@ class ConfigProvider:
             except Exception:
                 base = {}
 
+        default_llm = None
+        if cfg:
+            default_llm = getattr(cfg, "default_llm", None) or base.get("default_llm")
+
+        default_provider = None
+        if cfg and default_llm:
+            try:
+                for llm_cfg in getattr(cfg, "llm_configs", []) or []:
+                    if getattr(llm_cfg, "model_name", None) == default_llm:
+                        default_provider = getattr(llm_cfg, "provider", None)
+                        if default_provider:
+                            break
+            except Exception:
+                default_provider = None
+
         # Merge ENV over DB (best-effort heuristics):
         # - if ENV with exact key exists -> override
         # - try uppercased and dot/space to underscore variants
@@ -77,6 +92,19 @@ class ConfigProvider:
                     break
             if found is not None:
                 merged[k] = found
+
+        # 将 system_configs 根级别的默认模型信息补齐到 settings 视图中，
+        # 避免前端在 quick/deep 未单独设置时错误回退到硬编码 qwen-*。
+        if default_llm:
+            merged.setdefault("default_llm", default_llm)
+            merged.setdefault("default_model", default_llm)
+            merged.setdefault("quick_analysis_model", default_llm)
+            merged.setdefault("deep_analysis_model", default_llm)
+            merged.setdefault("quick_think_llm", default_llm)
+            merged.setdefault("deep_think_llm", default_llm)
+
+        if default_provider:
+            merged.setdefault("default_provider", default_provider)
 
         # Optionally: allow whitelisting additional env-only keys via prefix
         # For now, keep minimal behavior to avoid surprising surfaces.

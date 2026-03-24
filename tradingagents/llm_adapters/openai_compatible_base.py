@@ -174,22 +174,75 @@ class OpenAICompatibleBase(ChatOpenAI):
         
         return result
 
+    def _extract_token_usage(self, result: ChatResult) -> tuple[Optional[int], Optional[int], Optional[int], str]:
+        """从不同LangChain/OpenAI兼容结果结构中提取token用量。"""
+        # 优先使用 AIMessage 上的标准化 usage_metadata
+        try:
+            if result.generations:
+                message = result.generations[0].message
+                usage = getattr(message, "usage_metadata", None)
+                if usage:
+                    prompt_tokens = usage.get("input_tokens")
+                    completion_tokens = usage.get("output_tokens")
+                    total_tokens = usage.get("total_tokens")
+                    return prompt_tokens, completion_tokens, total_tokens, "message.usage_metadata"
+
+                response_metadata = getattr(message, "response_metadata", None) or {}
+                token_usage = response_metadata.get("token_usage")
+                if token_usage:
+                    prompt_tokens = token_usage.get("prompt_tokens")
+                    completion_tokens = token_usage.get("completion_tokens")
+                    total_tokens = token_usage.get("total_tokens")
+                    return prompt_tokens, completion_tokens, total_tokens, "message.response_metadata.token_usage"
+        except Exception:
+            pass
+
+        # 兼容 llm_output 中的原始 OpenAI usage 结构
+        try:
+            llm_output = getattr(result, "llm_output", None) or {}
+            token_usage = llm_output.get("token_usage")
+            if token_usage:
+                prompt_tokens = token_usage.get("prompt_tokens")
+                completion_tokens = token_usage.get("completion_tokens")
+                total_tokens = token_usage.get("total_tokens")
+                return prompt_tokens, completion_tokens, total_tokens, "llm_output.token_usage"
+        except Exception:
+            pass
+
+        # 兼容少数场景下直接挂在 ChatResult 上的 usage_metadata
+        usage = getattr(result, "usage_metadata", None)
+        if usage:
+            prompt_tokens = usage.get("input_tokens")
+            completion_tokens = usage.get("output_tokens")
+            total_tokens = usage.get("total_tokens")
+            return prompt_tokens, completion_tokens, total_tokens, "result.usage_metadata"
+
+        return None, None, None, "unavailable"
+
     def _track_token_usage(self, result: ChatResult, kwargs: Dict, start_time: float):
         """记录token使用量并输出日志"""
         if not TOKEN_TRACKING_ENABLED:
             return
         try:
-            # 统计token信息
-            usage = getattr(result, "usage_metadata", None)
-            total_tokens = usage.get("total_tokens") if usage else None
-            prompt_tokens = usage.get("input_tokens") if usage else None
-            completion_tokens = usage.get("output_tokens") if usage else None
+            prompt_tokens, completion_tokens, total_tokens, usage_source = self._extract_token_usage(result)
 
             elapsed = time.time() - start_time
             logger.info(
                 f"📊 Token使用 - Provider: {getattr(self, 'provider_name', 'unknown')}, Model: {getattr(self, 'model_name', 'unknown')}, "
-                f"总tokens: {total_tokens}, 提示: {prompt_tokens}, 补全: {completion_tokens}, 用时: {elapsed:.2f}s"
+                f"总tokens: {total_tokens}, 提示: {prompt_tokens}, 补全: {completion_tokens}, 来源: {usage_source}, 用时: {elapsed:.2f}s"
             )
+
+            if (prompt_tokens or completion_tokens) and prompt_tokens is not None and completion_tokens is not None:
+                session_id = kwargs.get("session_id", f"{getattr(self, 'provider_name', 'unknown')}_{int(start_time * 1000)}")
+                analysis_type = kwargs.get("analysis_type", "stock_analysis")
+                token_tracker.track_usage(
+                    provider=getattr(self, "provider_name", "unknown"),
+                    model_name=getattr(self, "model_name", "unknown"),
+                    input_tokens=prompt_tokens,
+                    output_tokens=completion_tokens,
+                    session_id=session_id,
+                    analysis_type=analysis_type,
+                )
         except Exception as e:
             logger.warning(f"⚠️ Token跟踪记录失败: {e}")
 
