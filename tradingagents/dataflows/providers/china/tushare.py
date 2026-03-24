@@ -593,7 +593,12 @@ class TushareProvider(BaseStockDataProvider):
                 self.logger.error(f"❌ 批量获取实时行情失败（限流）: {e}")
                 raise  # 抛出限流错误，让上层处理
 
-            self.logger.error(f"❌ 批量获取实时行情失败: {e}")
+            error_text = str(e)
+            lowered = error_text.lower()
+            if "权限" in error_text or "permission" in lowered or "没有访问" in lowered:
+                self.logger.warning(f"⚠️ rt_k 批量接口无权限，返回空数据等待上层降级: {error_text}")
+            else:
+                self.logger.error(f"❌ 批量获取实时行情失败: {e}")
             return None
 
     def _is_rate_limit_error(self, error_msg: str) -> bool:

@@ -55,6 +55,11 @@ class TushareSyncService:
         tushare_tier = getattr(settings, "TUSHARE_TIER", "standard")  # free/basic/standard/premium/vip
         safety_margin = float(getattr(settings, "TUSHARE_RATE_LIMIT_SAFETY_MARGIN", "0.8"))
         self.rate_limiter = get_tushare_rate_limiter(tier=tushare_tier, safety_margin=safety_margin)
+
+        # rt_k 权限缓存：确认无权限后避免定时任务反复报错
+        self._rt_k_permission_checked = False
+        self._rt_k_forbidden = False
+        self._rt_k_forbidden_reason: Optional[str] = None
     
     async def initialize(self):
         """初始化同步服务"""
@@ -69,6 +74,98 @@ class TushareSyncService:
         self.news_service = await get_news_data_service()
 
         logger.info("✅ Tushare同步服务初始化完成")
+
+    def _is_rt_k_permission_error(self, error_msg: str) -> bool:
+        """识别 Tushare rt_k 权限不足错误"""
+        text = (error_msg or "").lower()
+        keywords = [
+            "rt_k",
+            "权限不足",
+            "没有访问",
+            "permission",
+            "forbidden",
+            "联系客服添加",
+        ]
+        return any(keyword in text for keyword in keywords)
+
+    async def _check_rt_k_permission(self) -> bool:
+        """检测当前账号是否具备 rt_k 接口权限，并在进程内缓存结果"""
+        if self._rt_k_permission_checked:
+            return not self._rt_k_forbidden
+
+        try:
+            if not self.provider.is_available() or self.provider.api is None:
+                self._rt_k_permission_checked = True
+                self._rt_k_forbidden = False
+                return True
+
+            df = await asyncio.to_thread(self.provider.api.rt_k, ts_code="000001.SZ")
+            if df is None or getattr(df, "empty", True):
+                logger.info("⚠️ Tushare rt_k 权限检测返回空数据，暂不判定为无权限")
+                self._rt_k_permission_checked = True
+                self._rt_k_forbidden = False
+                self._rt_k_forbidden_reason = None
+                return True
+
+            self._rt_k_permission_checked = True
+            self._rt_k_forbidden = False
+            self._rt_k_forbidden_reason = None
+            return True
+
+        except Exception as e:
+            error_msg = str(e)
+            self._rt_k_permission_checked = True
+            if self._is_rt_k_permission_error(error_msg):
+                self._rt_k_forbidden = True
+                self._rt_k_forbidden_reason = error_msg
+                logger.warning(
+                    "⚠️ 当前 Tushare 账号无 rt_k 接口权限，实时行情同步将自动切换到 AKShare。原因: %s",
+                    error_msg,
+                )
+                return False
+
+            logger.warning(f"⚠️ rt_k 权限检测失败，暂按可用处理: {e}")
+            self._rt_k_forbidden = False
+            self._rt_k_forbidden_reason = None
+            return True
+
+    async def _sync_realtime_quotes_via_akshare(
+        self,
+        stats: Dict[str, Any],
+        symbols: Optional[List[str]] = None,
+        force: bool = False,
+        reason: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """统一走 AKShare 实时行情同步，减少 rt_k 无权限时的重复日志噪音"""
+        from app.worker.akshare_sync_service import get_akshare_sync_service
+
+        akshare_service = await get_akshare_sync_service()
+        if not akshare_service:
+            raise RuntimeError("AKShare 服务不可用，无法执行实时行情降级")
+
+        if reason:
+            logger.info(f"🔁 实时行情同步切换到 AKShare: {reason}")
+
+        akshare_result = await akshare_service.sync_realtime_quotes(
+            symbols=symbols,
+            force=force
+        )
+        stats["switched_to_akshare"] = True
+        stats["success_count"] = akshare_result.get("success_count", 0)
+        stats["error_count"] = akshare_result.get("error_count", 0)
+        stats["total_processed"] = akshare_result.get("total_processed", 0)
+        stats["errors"] = akshare_result.get("errors", [])
+        stats["end_time"] = datetime.utcnow()
+        stats["duration"] = (stats["end_time"] - stats["start_time"]).total_seconds()
+
+        logger.info(
+            f"✅ AKShare 实时行情同步完成: "
+            f"总计 {stats['total_processed']} 只, "
+            f"成功 {stats['success_count']} 只, "
+            f"错误 {stats['error_count']} 只, "
+            f"耗时 {stats['duration']:.2f} 秒"
+        )
+        return stats
     
     # ==================== 基础信息同步 ====================
     
@@ -268,40 +365,21 @@ class TushareSyncService:
                     f"（避免浪费 Tushare rt_k 配额，每小时只能调用2次）"
                 )
                 logger.info(f"🎯 使用 AKShare 同步 {len(symbols)} 只股票的实时行情: {symbols}")
-
-                # 调用 AKShare 服务
-                from app.worker.akshare_sync_service import get_akshare_sync_service
-                akshare_service = await get_akshare_sync_service()
-
-                if not akshare_service:
-                    logger.error("❌ AKShare 服务不可用，回退到 Tushare 批量接口")
-                    # 回退到 Tushare 批量接口
-                    quotes_map = await self.provider.get_realtime_quotes_batch()
-                    if quotes_map and symbols:
-                        quotes_map = {symbol: quotes_map[symbol] for symbol in symbols if symbol in quotes_map}
-                else:
-                    # 使用 AKShare 同步
-                    akshare_result = await akshare_service.sync_realtime_quotes(
-                        symbols=symbols,
-                        force=force
-                    )
-                    stats["switched_to_akshare"] = True
-                    stats["success_count"] = akshare_result.get("success_count", 0)
-                    stats["error_count"] = akshare_result.get("error_count", 0)
-                    stats["total_processed"] = akshare_result.get("total_processed", 0)
-                    stats["errors"] = akshare_result.get("errors", [])
-                    stats["end_time"] = datetime.utcnow()
-                    stats["duration"] = (stats["end_time"] - stats["start_time"]).total_seconds()
-
-                    logger.info(
-                        f"✅ AKShare 实时行情同步完成: "
-                        f"总计 {stats['total_processed']} 只, "
-                        f"成功 {stats['success_count']} 只, "
-                        f"错误 {stats['error_count']} 只, "
-                        f"耗时 {stats['duration']:.2f} 秒"
-                    )
-                    return stats
+                return await self._sync_realtime_quotes_via_akshare(
+                    stats=stats,
+                    symbols=symbols,
+                    force=force,
+                    reason=f"股票数量 <= {USE_AKSHARE_THRESHOLD}，避免浪费 rt_k 配额",
+                )
             else:
+                if not await self._check_rt_k_permission():
+                    return await self._sync_realtime_quotes_via_akshare(
+                        stats=stats,
+                        symbols=symbols,
+                        force=force,
+                        reason=f"检测到 Tushare rt_k 无权限（{self._rt_k_forbidden_reason or '权限不足'}）",
+                    )
+
                 # 使用 Tushare 批量接口一次性获取全市场行情
                 if symbols:
                     logger.info(f"📊 使用 Tushare 批量接口同步 {len(symbols)} 只股票的实时行情（从全市场数据中筛选）")
@@ -312,6 +390,13 @@ class TushareSyncService:
                 quotes_map = await self.provider.get_realtime_quotes_batch()
 
                 if not quotes_map:
+                    if self._rt_k_forbidden:
+                        return await self._sync_realtime_quotes_via_akshare(
+                            stats=stats,
+                            symbols=symbols,
+                            force=force,
+                            reason=f"rt_k 已确认无权限（{self._rt_k_forbidden_reason or '权限不足'}）",
+                        )
                     logger.warning("⚠️ 未获取到实时行情数据")
                     return stats
 
