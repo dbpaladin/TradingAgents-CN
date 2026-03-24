@@ -96,6 +96,13 @@ class TradeRecord(BaseModel):
     ai_signal: str = Field(default="", description="AI原始信号")
     ai_confidence: float = Field(default=0.0, description="AI置信度")
     ai_reason: str = Field(default="", description="AI决策原因摘要")
+    ai_provider: Optional[str] = Field(default=None, description="本次决策使用的模型供应商")
+    ai_model: Optional[str] = Field(default=None, description="本次决策使用的模型名称（可能为quick/deep组合）")
+    ai_runtime_mode: Optional[str] = Field(default=None, description="决策运行模式：primary/degraded/rule/reuse等")
+    analysis_elapsed_ms: Optional[float] = Field(default=None, description="AI推理耗时（毫秒）")
+    decision_elapsed_ms: Optional[float] = Field(default=None, description="信号解析与纠偏耗时（毫秒）")
+    execution_elapsed_ms: Optional[float] = Field(default=None, description="交易执行耗时（毫秒）")
+    day_elapsed_ms: Optional[float] = Field(default=None, description="当日完整处理耗时（毫秒）")
 
     # A股特殊情况标记
     t1_restriction: bool = Field(default=False, description="是否受T+1限制影响")

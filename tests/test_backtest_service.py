@@ -743,9 +743,58 @@ class TestBacktestRuleFallback:
         assert all(t.ai_signal != "DIAGNOSTIC" for t in result.trades)
         assert any("入场保护" in (t.ai_reason or "") for t in result.trades)
 
+    @pytest.mark.asyncio
+    async def test_run_records_model_and_step_elapsed_in_trade_details(self):
+        from app.services.backtest_service import BacktestEngine
+
+        task = make_test_task(start_date="2024-03-01", end_date="2024-03-05")
+        task.config.decision_interval_days = 1
+        engine = BacktestEngine(task)
+
+        trading_days = [
+            "2024-03-01",
+            "2024-03-04",
+            "2024-03-05",
+        ]
+
+        engine._update_progress = AsyncMock()
+        engine._get_trading_calendar = AsyncMock(return_value=trading_days)
+        engine._warmup_market_data = AsyncMock()
+        engine._get_analysis_runtime = MagicMock(return_value={
+            "runtime_mode": "primary",
+            "quick_model": "gpt-5.4-mini",
+            "deep_model": "gpt-5.4",
+            "quick_provider": "custom_openai",
+            "deep_provider": "custom_openai",
+            "quick_timeout": 60,
+            "deep_timeout": 60,
+            "config": {},
+            "reuse_graph": False,
+            "selected_analysts": ["market"],
+        })
+        engine._get_stock_price = AsyncMock(side_effect=[10.0, 10.2, 10.1])
+        engine._get_benchmark_price = AsyncMock(side_effect=[3000.0, 3000.0, 3010.0, 3020.0])
+        engine._run_ai_analysis = AsyncMock(side_effect=[
+            {"action": "BUY", "confidence": 0.8, "summary": "买入"},
+            {"action": "HOLD", "confidence": 0.6, "summary": "持有"},
+            {"action": "SELL", "confidence": 0.7, "summary": "卖出"},
+        ])
+
+        result = await engine.run()
+        detail_rows = [t for t in result.trades if t.ai_signal != "DIAGNOSTIC"]
+
+        assert detail_rows, "应有按日明细记录"
+        for row in detail_rows:
+            assert row.ai_model is not None and row.ai_model != ""
+            assert row.ai_provider is not None and row.ai_provider != ""
+            assert row.analysis_elapsed_ms is not None and row.analysis_elapsed_ms >= 0
+            assert row.decision_elapsed_ms is not None and row.decision_elapsed_ms >= 0
+            assert row.execution_elapsed_ms is not None and row.execution_elapsed_ms >= 0
+            assert row.day_elapsed_ms is not None and row.day_elapsed_ms >= 0
+
 
 class TestBacktestAutoOptimization:
-    def test_auto_optimize_promotes_heavy_backtest_to_fast_interval(self):
+    def test_auto_optimize_does_not_override_user_daily_interval(self):
         from app.services.backtest_service import BacktestService
 
         service = BacktestService()
@@ -768,8 +817,8 @@ class TestBacktestAutoOptimization:
 
         note = service._auto_optimize_backtest_config(config)
 
-        assert note is not None
-        assert config.decision_interval_days == 5
+        assert note is None
+        assert config.decision_interval_days == 1
 
     def test_auto_optimize_keeps_explicit_fast_mode_choice(self):
         from app.services.backtest_service import BacktestService

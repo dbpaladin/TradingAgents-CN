@@ -12,6 +12,7 @@ import asyncio
 import uuid
 import logging
 import math
+import time
 import concurrent.futures
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional, Tuple
@@ -455,6 +456,22 @@ class BacktestEngine:
         因此仅复用明确的 BUY/SELL 方向信号。
         """
         return action in {TradeAction.BUY, TradeAction.SELL}
+
+    def _format_runtime_models(self, runtime: Dict[str, Any]) -> str:
+        """将运行时 quick/deep 模型组合为可读字符串"""
+        quick_model = str(runtime.get("quick_model") or "").strip()
+        deep_model = str(runtime.get("deep_model") or "").strip()
+        if quick_model and deep_model and quick_model != deep_model:
+            return f"{quick_model} / {deep_model}"
+        return quick_model or deep_model or "-"
+
+    def _format_runtime_providers(self, runtime: Dict[str, Any]) -> str:
+        """将运行时 quick/deep provider 组合为可读字符串"""
+        quick_provider = str(runtime.get("quick_provider") or "").strip()
+        deep_provider = str(runtime.get("deep_provider") or "").strip()
+        if quick_provider and deep_provider and quick_provider != deep_provider:
+            return f"{quick_provider} / {deep_provider}"
+        return quick_provider or deep_provider or "-"
 
     def _normalize_action_for_position(self, action: TradeAction, reason: str) -> Tuple[TradeAction, str]:
         """
@@ -1184,9 +1201,13 @@ class BacktestEngine:
         last_decision_action = TradeAction.HOLD
         last_decision_confidence = 0.0
         last_decision_reason = "暂无AI信号"
+        last_decision_model = "-"
+        last_decision_provider = "-"
+        last_decision_runtime_mode = "reuse"
         last_analysis_idx = -decision_interval_days
 
         for idx, date_str in enumerate(trading_days):
+            day_started_at = time.perf_counter()
             progress = int(5 + (idx / total_days) * 90)
             can_reuse_last_decision = bool(last_decision) and self._can_reuse_decision(last_decision_action)
             should_run_ai = (
@@ -1210,8 +1231,13 @@ class BacktestEngine:
             limit_up, limit_down = None, None
 
             # 3c. 执行 AI 分析
+            analysis_started_at = time.perf_counter()
+            decision_model = "-"
+            decision_provider = "-"
+            decision_runtime_mode = "reuse"
             if should_run_ai:
                 if self._rule_mode_enabled:
+                    decision_runtime_mode = "rule"
                     fallback_decision = self._build_rule_fallback_decision(
                         trading_days=trading_days,
                         idx=idx,
@@ -1227,7 +1253,13 @@ class BacktestEngine:
                     action, confidence, reason = self._parse_ai_decision(decision)
                     self._rule_fallback_used += 1
                     diagnostic_stats["rule_fallback_used"] += 1
+                    decision_model = "rule_fallback"
+                    decision_provider = "internal"
                 else:
+                    active_runtime = self._get_active_analysis_runtime()
+                    decision_runtime_mode = active_runtime.get("runtime_mode", self._analysis_mode)
+                    decision_model = self._format_runtime_models(active_runtime)
+                    decision_provider = self._format_runtime_providers(active_runtime)
                     decision = await self._run_ai_analysis(self.config.symbol, date_str)
                     action, confidence, reason = self._parse_ai_decision(decision)
                     if self._is_ai_failure_reason(reason):
@@ -1264,13 +1296,21 @@ class BacktestEngine:
                 last_decision_action = action
                 last_decision_confidence = confidence
                 last_decision_reason = reason
+                last_decision_model = decision_model
+                last_decision_provider = decision_provider
+                last_decision_runtime_mode = decision_runtime_mode
                 last_analysis_idx = idx
             else:
                 decision = last_decision
                 action = last_decision_action
                 confidence = last_decision_confidence
                 reason = f"[复用前次信号] {last_decision_reason}"
+                decision_model = last_decision_model
+                decision_provider = last_decision_provider
+                decision_runtime_mode = "reuse"
+            analysis_elapsed_ms = (time.perf_counter() - analysis_started_at) * 1000
 
+            decision_started_at = time.perf_counter()
             # 3c.1 执行前信号归一化：避免空仓 SELL / 持仓 BUY 被计为执行失败
             normalized_action, normalized_reason = self._normalize_action_for_position(action, reason)
             if normalized_action != action:
@@ -1320,6 +1360,7 @@ class BacktestEngine:
             if used_rule_fallback:
                 self._rule_fallback_used += 1
                 diagnostic_stats["rule_fallback_used"] += 1
+            decision_elapsed_ms = (time.perf_counter() - decision_started_at) * 1000
 
             # 3d. T+1 限制检查
             t1_restricted = False
@@ -1330,8 +1371,29 @@ class BacktestEngine:
                     t1_restricted = True
 
             # 3e. 执行交易
-            trade = await self._execute_trade(date_str, price, action, confidence, reason, t1_restricted, limit_up, limit_down)
-            
+            execution_started_at = time.perf_counter()
+            trade = await self._execute_trade(
+                date_str,
+                price,
+                action,
+                confidence,
+                reason,
+                t1_restricted,
+                limit_up,
+                limit_down,
+                ai_provider=decision_provider,
+                ai_model=decision_model,
+                ai_runtime_mode=decision_runtime_mode,
+                analysis_elapsed_ms=analysis_elapsed_ms,
+                decision_elapsed_ms=decision_elapsed_ms,
+                execution_elapsed_ms=0.0,  # 先占位，执行后更新
+                day_elapsed_ms=0.0,        # 先占位，收尾时更新
+            )
+            execution_elapsed_ms = (time.perf_counter() - execution_started_at) * 1000
+            day_elapsed_ms = (time.perf_counter() - day_started_at) * 1000
+            trade.execution_elapsed_ms = round(execution_elapsed_ms, 2)
+            trade.day_elapsed_ms = round(day_elapsed_ms, 2)
+
             # 记录诊断统计
             if action == TradeAction.BUY:
                 diagnostic_stats["ai_buy"] += 1
@@ -1376,6 +1438,13 @@ class BacktestEngine:
                 position_value=0.0, total_assets=self.cash,
                 ai_signal="DIAGNOSTIC", ai_confidence=1.0,
                 ai_reason=diag_str,
+                ai_provider="system",
+                ai_model="diagnostic",
+                ai_runtime_mode="diagnostic",
+                analysis_elapsed_ms=0.0,
+                decision_elapsed_ms=0.0,
+                execution_elapsed_ms=0.0,
+                day_elapsed_ms=0.0,
                 t1_restriction=False, limit_up=False, limit_down=False, executed=True
             ))
 
@@ -1396,7 +1465,14 @@ class BacktestEngine:
     async def _execute_trade(
         self, date_str: str, price: float, action: TradeAction,
         confidence: float, reason: str, t1_restricted: bool,
-        limit_up: Optional[float], limit_down: Optional[float]
+        limit_up: Optional[float], limit_down: Optional[float],
+        ai_provider: Optional[str] = None,
+        ai_model: Optional[str] = None,
+        ai_runtime_mode: Optional[str] = None,
+        analysis_elapsed_ms: Optional[float] = None,
+        decision_elapsed_ms: Optional[float] = None,
+        execution_elapsed_ms: Optional[float] = None,
+        day_elapsed_ms: Optional[float] = None,
     ) -> TradeRecord:
         """执行单笔交易，返回 TradeRecord"""
         shares = 0
@@ -1485,6 +1561,13 @@ class BacktestEngine:
             ai_signal=str(action.value),
             ai_confidence=confidence,
             ai_reason=reason,
+            ai_provider=ai_provider,
+            ai_model=ai_model,
+            ai_runtime_mode=ai_runtime_mode,
+            analysis_elapsed_ms=round(float(analysis_elapsed_ms or 0.0), 2),
+            decision_elapsed_ms=round(float(decision_elapsed_ms or 0.0), 2),
+            execution_elapsed_ms=round(float(execution_elapsed_ms or 0.0), 2),
+            day_elapsed_ms=round(float(day_elapsed_ms or 0.0), 2),
             t1_restriction=t1_restricted,
             limit_up=is_limit_up,
             limit_down=is_limit_down,
@@ -1640,32 +1723,15 @@ class BacktestService:
 
     def _auto_optimize_backtest_config(self, config: BacktestConfig) -> Optional[str]:
         """
-        对明显过重的回测自动开启加速/极速模式。
-        仅在用户仍使用逐日重算时介入，避免覆盖用户已经做出的明确选择。
+        自动降载已禁用：尊重用户手动设置的 decision_interval_days。
+        不再自动把周期改成 3/5 天。
         """
-        if (config.decision_interval_days or 1) > 1:
-            return None
-
-        estimated_days = self._estimate_trading_days_fast(config.start_date, config.end_date)
-        analyst_weight = self._estimate_analyst_weight(config.selected_analysts)
-        workload_score = estimated_days * analyst_weight
-
-        optimized_interval = 1
-        if workload_score >= 180 or (estimated_days >= 35 and analyst_weight >= 5):
-            optimized_interval = 5
-        elif workload_score >= 90 or (estimated_days >= 20 and analyst_weight >= 4):
-            optimized_interval = 3
-
-        if optimized_interval == 1:
-            return None
-
-        config.decision_interval_days = optimized_interval
-        note = (
-            f"检测到本次回测负载较高，已自动切换为每 {optimized_interval} 个交易日重算一次 AI"
-            f"（估算交易日 {estimated_days}，分析师权重 {analyst_weight}）"
+        logger.info(
+            "ℹ️ [回测周期策略] 保持用户设置 decision_interval_days=%s | symbol=%s",
+            config.decision_interval_days,
+            config.symbol,
         )
-        logger.warning("⚡ [回测自动降载] %s | symbol=%s", note, config.symbol)
-        return note
+        return None
 
     async def create_task(self, user_id: str, config: BacktestConfig) -> Dict[str, Any]:
         """创建并提交回测任务（异步执行）"""

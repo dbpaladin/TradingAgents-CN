@@ -356,6 +356,18 @@
               <el-table-column prop="amount" label="金额" width="100">
                 <template #default="{ row }">{{ formatMoney(row.amount) }}</template>
               </el-table-column>
+              <el-table-column label="模型" width="220" show-overflow-tooltip>
+                <template #default="{ row }">
+                  <div>{{ row.ai_model || '-' }}</div>
+                  <el-tag v-if="row.ai_provider" size="small" type="info">{{ row.ai_provider }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="推理耗时" width="170">
+                <template #default="{ row }">
+                  <div>推理: {{ formatMs(row.analysis_elapsed_ms) }}</div>
+                  <div>总计: {{ formatMs(row.day_elapsed_ms) }}</div>
+                </template>
+              </el-table-column>
               <el-table-column prop="total_assets" label="总资产" width="110">
                 <template #default="{ row }">{{ formatMoney(row.total_assets) }}</template>
               </el-table-column>
@@ -367,6 +379,41 @@
                   <el-tag v-if="row.limit_down" size="small" type="info">跌停</el-tag>
                 </template>
               </el-table-column>
+            </el-table>
+          </el-card>
+
+          <el-card class="trades-card" shadow="never" style="margin-top: 16px">
+            <template #header>
+              <div class="card-header">
+                <el-icon><Clock /></el-icon>
+                <span>AI推理明细（{{ decisionDetails.length }} 天）</span>
+              </div>
+            </template>
+            <el-table
+              :data="decisionDetails"
+              size="small"
+              stripe
+              :max-height="420"
+            >
+              <el-table-column prop="date" label="日期" width="110" />
+              <el-table-column prop="ai_signal" label="AI信号" width="95" />
+              <el-table-column prop="action" label="执行动作" width="95" />
+              <el-table-column label="模型" width="260" show-overflow-tooltip>
+                <template #default="{ row }">
+                  <div>{{ row.ai_model || '-' }}</div>
+                  <el-tag size="small" type="info">{{ row.ai_provider || '-' }}</el-tag>
+                  <el-tag size="small" type="warning" style="margin-left: 6px">{{ row.ai_runtime_mode || '-' }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="分步耗时(ms)" width="280">
+                <template #default="{ row }">
+                  <div>推理: {{ formatMs(row.analysis_elapsed_ms) }}</div>
+                  <div>决策: {{ formatMs(row.decision_elapsed_ms) }}</div>
+                  <div>执行: {{ formatMs(row.execution_elapsed_ms) }}</div>
+                  <div>当日总计: {{ formatMs(row.day_elapsed_ms) }}</div>
+                </template>
+              </el-table-column>
+              <el-table-column prop="ai_reason" label="推理摘要" show-overflow-tooltip />
             </el-table>
           </el-card>
         </template>
@@ -461,6 +508,10 @@ const executedTrades = computed(() =>
   (backtestResult.value?.trades || []).filter(t => t.executed)
 )
 
+const decisionDetails = computed(() =>
+  (backtestResult.value?.trades || []).filter(t => t.ai_signal !== 'DIAGNOSTIC')
+)
+
 // ===== 方法 =====
 function disabledDate(d: Date) {
   return d > new Date()
@@ -487,6 +538,11 @@ function formatPct(val: number) {
 function formatMoney(val: number) {
   if (val >= 10000) return (val / 10000).toFixed(2) + '万'
   return val.toFixed(2)
+}
+
+function formatMs(val?: number | null) {
+  if (val === null || val === undefined || Number.isNaN(val)) return '-'
+  return `${Number(val).toFixed(1)}ms`
 }
 
 function modelLabel(model: LLMConfig) {

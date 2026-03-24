@@ -63,6 +63,13 @@ export interface TradeRecord {
   ai_signal: string
   ai_confidence: number
   ai_reason: string
+  ai_provider?: string | null
+  ai_model?: string | null
+  ai_runtime_mode?: string | null
+  analysis_elapsed_ms?: number | null
+  decision_elapsed_ms?: number | null
+  execution_elapsed_ms?: number | null
+  day_elapsed_ms?: number | null
   t1_restriction: boolean
   limit_up: boolean
   limit_down: boolean
