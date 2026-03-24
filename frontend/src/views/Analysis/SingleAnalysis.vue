@@ -57,6 +57,13 @@
                         <el-icon><InfoFilled /></el-icon>
                         {{ stockCodeHelp }}
                       </div>
+                      <div v-if="stockNameLoading && analysisForm.stockCode.trim() && !stockCodeError" class="stock-name-loading">
+                        <el-icon class="is-loading"><Loading /></el-icon>
+                        正在匹配股票名称...
+                      </div>
+                      <div v-if="stockName && !stockCodeError" class="stock-name-hint">
+                        <el-tag size="small" type="success">{{ stockName }}</el-tag>
+                      </div>
                     </el-form-item>
                   </el-col>
                   <el-col :span="12">
@@ -721,6 +728,7 @@ import { useAuthStore } from '@/stores/auth'
 import { configApi } from '@/api/config'
 import DeepModelSelector from '@/components/DeepModelSelector.vue'
 import { ANALYSTS, convertAnalystNamesToIds } from '@/constants/analysts'
+import { searchStocks } from '@/api/multiMarket'
 import { marked } from 'marked'
 import { recommendModels, validateModels, type ModelRecommendationResponse } from '@/api/modelCapabilities'
 import { validateStockCode, getStockCodeFormatHelp, getStockCodeExamples } from '@/utils/stockValidator'
@@ -734,6 +742,11 @@ marked.setOptions({
 
 // 市场类型定义
 type MarketType = 'A股' | '美股' | '港股'
+const MARKET_CODE_MAP: Record<MarketType, 'CN' | 'US' | 'HK'> = {
+  'A股': 'CN',
+  '美股': 'US',
+  '港股': 'HK'
+}
 
 // 表单类型定义
 interface AnalysisForm {
@@ -824,6 +837,10 @@ const analysisForm = reactive<AnalysisForm>({
 // 股票代码验证相关
 const stockCodeError = ref<string>('')
 const stockCodeHelp = ref<string>('')
+const stockName = ref<string>('')
+const stockNameLoading = ref(false)
+let stockLookupTimer: ReturnType<typeof setTimeout> | null = null
+let stockLookupSeq = 0
 
 // 深度选项（5个级别，基于实际测试数据更新）
 const depthOptions = [
@@ -845,10 +862,28 @@ const onStockCodeInput = () => {
   stockCodeError.value = ''
   // 显示格式提示
   stockCodeHelp.value = getStockCodeFormatHelp(analysisForm.market)
+  stockName.value = ''
+
+  if (stockLookupTimer) {
+    clearTimeout(stockLookupTimer)
+    stockLookupTimer = null
+  }
+
+  const inputCode = analysisForm.stockCode.trim()
+  if (!inputCode) {
+    stockNameLoading.value = false
+    return
+  }
+
+  stockLookupTimer = setTimeout(() => {
+    void fetchStockInfo()
+  }, 400)
 }
 
 // 市场类型变更时的处理
 const onMarketChange = () => {
+  stockName.value = ''
+
   // 重新验证股票代码
   if (analysisForm.stockCode.trim()) {
     validateStockCodeInput()
@@ -865,6 +900,8 @@ const validateStockCodeInput = () => {
   if (!code) {
     stockCodeError.value = ''
     stockCodeHelp.value = ''
+    stockName.value = ''
+    stockNameLoading.value = false
     return
   }
 
@@ -874,6 +911,8 @@ const validateStockCodeInput = () => {
   if (!validation.valid) {
     stockCodeError.value = validation.message || '股票代码格式不正确'
     stockCodeHelp.value = ''
+    stockName.value = ''
+    stockNameLoading.value = false
   } else {
     stockCodeError.value = ''
     stockCodeHelp.value = `✓ ${validation.market}代码格式正确`
@@ -891,12 +930,44 @@ const validateStockCodeInput = () => {
   }
 
   // 获取股票信息
-  fetchStockInfo()
+  void fetchStockInfo()
 }
 
 // 获取股票信息
-const fetchStockInfo = () => {
-  // TODO: 实现股票信息获取
+const fetchStockInfo = async () => {
+  const rawCode = analysisForm.stockCode.trim()
+  if (!rawCode) {
+    stockName.value = ''
+    stockNameLoading.value = false
+    return
+  }
+
+  const lookupCode = rawCode.split('.')[0].trim().toUpperCase()
+  if (!lookupCode) {
+    stockName.value = ''
+    stockNameLoading.value = false
+    return
+  }
+
+  const requestSeq = ++stockLookupSeq
+  stockNameLoading.value = true
+
+  try {
+    const marketCode = MARKET_CODE_MAP[analysisForm.market] || 'CN'
+    const res = await searchStocks(marketCode, lookupCode, 20)
+    if (requestSeq !== stockLookupSeq) return
+
+    const items = res?.data?.stocks || []
+    const exact = items.find(item => String(item.code || '').trim().toUpperCase() === lookupCode)
+    stockName.value = (exact || items[0])?.name || ''
+  } catch {
+    if (requestSeq !== stockLookupSeq) return
+    stockName.value = ''
+  } finally {
+    if (requestSeq === stockLookupSeq) {
+      stockNameLoading.value = false
+    }
+  }
 }
 
 // 切换分析师
@@ -1775,6 +1846,12 @@ onUnmounted(() => {
     clearInterval(pollingTimer.value)
     pollingTimer.value = null
   }
+  if (stockLookupTimer) {
+    clearTimeout(stockLookupTimer)
+    stockLookupTimer = null
+  }
+  stockLookupSeq += 1
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
 })
 
 // 页面可见性变化时的处理
@@ -2254,6 +2331,12 @@ onMounted(async () => {
   }
   if (q?.market) analysisForm.market = normalizeMarketForAnalysis(q.market) as MarketType
 
+  // 如果页面初始化时已经有代码，自动带出股票名称
+  if (analysisForm.stockCode.trim()) {
+    stockCodeHelp.value = getStockCodeFormatHelp(analysisForm.market)
+    void fetchStockInfo()
+  }
+
   // 尝试恢复任务状态（仅当没有新股票代码时）
   if (!hasNewStock) {
     await restoreTaskFromCache()
@@ -2387,6 +2470,19 @@ onMounted(async () => {
         .el-icon {
           font-size: 14px;
         }
+      }
+
+      .stock-name-loading {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 8px;
+        font-size: 12px;
+        color: #909399;
+      }
+
+      .stock-name-hint {
+        margin-top: 8px;
       }
 
       .depth-selector {

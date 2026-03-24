@@ -185,8 +185,8 @@ class UnifiedStockService:
             ]
         }
 
-        # 查询所有匹配的记录
-        cursor = collection.find(filter_query)
+        # 查询所有匹配的记录（显式排除 _id，避免 ObjectId 序列化异常）
+        cursor = collection.find(filter_query, {"_id": 0})
         all_results = await cursor.to_list(length=None)
         
         if not all_results:
@@ -197,6 +197,8 @@ class UnifiedStockService:
         unique_results = {}
         
         for doc in all_results:
+            # 兜底：确保不会带出 MongoDB ObjectId
+            doc.pop("_id", None)
             code = doc.get("code")
             source = doc.get("source")
             
@@ -283,4 +285,3 @@ class UnifiedStockService:
                 "timezone": "America/New_York"
             }
         ]
-

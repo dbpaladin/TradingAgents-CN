@@ -29,6 +29,8 @@
                 placeholder="如: 000001 或 600519"
                 clearable
                 :prefix-icon="Search"
+                @input="onSymbolInput"
+                @blur="fetchStockName"
               >
                 <template #append>
                   <el-button @click="fetchStockName" :loading="loadingName" text>查询</el-button>
@@ -203,7 +205,10 @@
               @click="selectTask(task)"
             >
               <div class="history-item-header">
-                <span class="history-symbol">{{ task.symbol }}</span>
+                <div class="history-stock">
+                  <span class="history-symbol">{{ task.symbol }}</span>
+                  <span v-if="task.stock_name" class="history-stock-name">{{ task.stock_name }}</span>
+                </div>
                 <el-tag :type="statusTagType(task.status)" size="small">{{ statusLabel(task.status) }}</el-tag>
               </div>
               <div class="history-item-meta">
@@ -233,7 +238,10 @@
           <template #header>
             <div class="card-header">
               <el-icon class="spin-icon"><Loading /></el-icon>
-              <span>正在回测：{{ runningTaskStatus.symbol }}</span>
+              <span>
+                正在回测：{{ runningTaskStatus.symbol }}
+                <template v-if="currentTaskStockName"> · {{ currentTaskStockName }}</template>
+              </span>
             </div>
           </template>
           <el-progress
@@ -441,6 +449,7 @@ import {
 } from '@element-plus/icons-vue'
 import { backtestApi, type BacktestTaskStatus, type BacktestResult, type BacktestTaskListItem } from '@/api/backtest'
 import { configApi, type LLMConfig } from '@/api/config'
+import { searchStocks, type StockInfo } from '@/api/multiMarket'
 
 // ===== 表单状态 =====
 const formRef = ref()
@@ -480,6 +489,8 @@ const taskHistory = ref<BacktestTaskListItem[]>([])
 const loadingHistory = ref(false)
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
+let stockNameTimer: ReturnType<typeof setTimeout> | null = null
+let stockNameQuerySeq = 0
 
 // ===== ECharts =====
 const chartRef = ref<HTMLElement>()
@@ -489,6 +500,13 @@ let chartInstance: any = null
 const canSubmit = computed(() =>
   form.value.symbol && form.value.dateRange.length === 2 && form.value.selected_analysts.length > 0
 )
+
+const currentTaskStockName = computed(() => {
+  if (backtestResult.value?.stock_name) return backtestResult.value.stock_name
+  const taskId = currentTaskId.value
+  if (!taskId) return ''
+  return taskHistory.value.find(t => t.task_id === taskId)?.stock_name || ''
+})
 
 const estimatedTradingDays = computed(() => {
   if (form.value.dateRange.length < 2) return 0
@@ -571,24 +589,59 @@ async function initializeModelSettings() {
   }
 }
 
-async function fetchStockName() {
-  if (!form.value.symbol) return
-  loadingName.value = true
-  try {
-    // 使用 AkShare 搜索接口获取股票名称
-    const res = await fetch(`/api/stocks/search?keyword=${form.value.symbol}&market=A股`)
-    if (res.ok) {
-      const data = await res.json()
-      const items = data?.data?.stocks || []
-      if (items.length > 0) {
-        stockName.value = items[0].name || ''
-      }
-    }
-  } catch {
-    // silently fail
-  } finally {
-    loadingName.value = false
+function onSymbolInput() {
+  stockName.value = ''
+  if (stockNameTimer) {
+    clearTimeout(stockNameTimer)
+    stockNameTimer = null
   }
+
+  const symbol = form.value.symbol.trim()
+  if (!symbol || symbol.length < 3) return
+
+  stockNameTimer = setTimeout(() => {
+    void queryStockName(true)
+  }, 400)
+}
+
+function pickBestStockMatch(items: StockInfo[], keyword: string): StockInfo | undefined {
+  if (!items.length) return undefined
+  const normalized = keyword.trim().toUpperCase().split('.')[0]
+  return items.find(item => String(item.code || '').trim().toUpperCase() === normalized) || items[0]
+}
+
+async function queryStockName(silent = false) {
+  const symbol = form.value.symbol.trim()
+
+  if (!symbol) {
+    stockName.value = ''
+    loadingName.value = false
+    return
+  }
+
+  const querySeq = ++stockNameQuerySeq
+  if (!silent) loadingName.value = true
+
+  try {
+    const keyword = symbol.split('.')[0]
+    const res = await searchStocks('CN', keyword, 10)
+    if (querySeq !== stockNameQuerySeq) return
+
+    const items = res?.data?.stocks || []
+    const matched = pickBestStockMatch(items, keyword)
+    stockName.value = matched?.name || ''
+  } catch {
+    if (querySeq !== stockNameQuerySeq) return
+    stockName.value = ''
+  } finally {
+    if (!silent && querySeq === stockNameQuerySeq) {
+      loadingName.value = false
+    }
+  }
+}
+
+async function fetchStockName() {
+  await queryStockName(false)
 }
 
 async function submitBacktest() {
@@ -625,7 +678,7 @@ async function submitBacktest() {
     if (!taskId) throw new Error('未获取到任务ID')
 
     currentTaskId.value = taskId
-    const optimizationNote = res.data?.optimization_note || (res as any).optimization_note
+    const optimizationNote = (res.data as any)?.optimization_note || (res as any).optimization_note
     if (optimizationNote) {
       ElMessage.warning(optimizationNote)
     } else {
@@ -836,6 +889,11 @@ onMounted(async () => {
 onUnmounted(() => {
   stopPolling()
   chartInstance?.dispose()
+  if (stockNameTimer) {
+    clearTimeout(stockNameTimer)
+    stockNameTimer = null
+  }
+  stockNameQuerySeq += 1
 })
 </script>
 
@@ -967,9 +1025,25 @@ onUnmounted(() => {
     margin-bottom: 4px;
   }
 
+  .history-stock {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+  }
+
   .history-symbol {
     font-weight: 600;
     font-size: 15px;
+  }
+
+  .history-stock-name {
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 120px;
   }
 
   .history-item-meta {

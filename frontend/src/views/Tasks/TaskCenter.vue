@@ -280,7 +280,8 @@ const openBacktestResult = (row: BacktestTaskListItem) => {
 
 const deleteBacktestTask = async (row: BacktestTaskListItem) => {
   try {
-    await ElMessageBox.confirm(`确定删除回测任务 「${row.symbol}」？`, '确认删除', {
+    const stockLabel = row.stock_name ? `${row.symbol}（${row.stock_name}）` : row.symbol
+    await ElMessageBox.confirm(`确定删除回测任务 「${stockLabel}」？`, '确认删除', {
       confirmButtonText: '删除', cancelButtonText: '取消', type: 'error'
     })
     await backtestApi.deleteTask(row.task_id)
@@ -688,4 +689,3 @@ const formatTime = (t:string) => t ? formatDateTime(t) : '-'
   .pagination-wrapper { display:flex; justify-content:center; margin-top: 16px; }
 }
 </style>
-
