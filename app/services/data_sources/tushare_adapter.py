@@ -163,7 +163,12 @@ class TushareAdapter(DataSourceAdapter):
                 result[code6] = {'close': close, 'pct_chg': pct_chg, 'amount': amount, 'volume': vol, 'open': op, 'high': hi, 'low': lo, 'pre_close': pre_close}
             return result
         except Exception as e:
-            logger.error(f'Failed to fetch realtime quotes from Tushare rt_k: {e}')
+            error_text = str(e)
+            lowered = error_text.lower()
+            if "权限" in error_text or "permission" in lowered or "没有访问" in lowered:
+                logger.warning(f'Tushare rt_k 无权限，已降级到备用数据源: {error_text}')
+            else:
+                logger.error(f'Failed to fetch realtime quotes from Tushare rt_k: {error_text}')
             return None
 
     def get_kline(self, code: str, period: str = "day", limit: int = 120, adj: Optional[str] = None):
@@ -310,4 +315,3 @@ class TushareAdapter(DataSourceAdapter):
         except Exception as e:
             logger.error(f"Tushare: Failed to find latest trade date: {e}")
         return None
-

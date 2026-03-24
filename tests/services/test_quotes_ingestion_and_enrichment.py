@@ -79,15 +79,10 @@ def test_quotes_ingestion_run_once_writes_bulk(monkeypatch):
     from app.services.quotes_ingestion_service import QuotesIngestionService
     import app.services.quotes_ingestion_service as qis_mod
 
-    # Fake DataSourceManager to avoid external calls
-    class _FakeManager:
-        def get_realtime_quotes_with_fallback(self):
-            return {
-                "000001": {"close": 10.1, "pct_chg": 0.1, "amount": 1.0e8},
-                "600000": {"close": 9.8, "pct_chg": -0.3, "amount": 7.5e7},
-            }, "fake"
-
-    monkeypatch.setattr(qis_mod, "DataSourceManager", _FakeManager, raising=True)
+    fake_quotes = {
+        "000001": {"close": 10.1, "pct_chg": 0.1, "amount": 1.0e8},
+        "600000": {"close": 9.8, "pct_chg": -0.3, "amount": 7.5e7},
+    }
 
     # Capture bulk_write ops
     class _FakeResult:
@@ -123,6 +118,18 @@ def test_quotes_ingestion_run_once_writes_bulk(monkeypatch):
 
     async def _run():
         svc = QuotesIngestionService()
+        monkeypatch.setattr(
+            QuotesIngestionService,
+            "_check_tushare_permission",
+            lambda self: False,
+            raising=True,
+        )
+        monkeypatch.setattr(
+            QuotesIngestionService,
+            "_fetch_quotes_from_source",
+            lambda self, source_type, akshare_api=None: (fake_quotes, "fake"),
+            raising=True,
+        )
         # Force trading time to True
         monkeypatch.setattr(QuotesIngestionService, "_is_trading_time", lambda self, now=None: True, raising=True)
         await svc.run_once()
@@ -133,3 +140,19 @@ def test_quotes_ingestion_run_once_writes_bulk(monkeypatch):
     import asyncio
     asyncio.run(_run())
 
+
+def test_quotes_ingestion_skips_tushare_when_rt_k_forbidden(monkeypatch):
+    from app.services.quotes_ingestion_service import QuotesIngestionService
+
+    svc = QuotesIngestionService()
+    svc._tushare_permission_checked = True
+    svc._tushare_rt_k_forbidden = True
+
+    def _should_not_call(_self):
+        raise AssertionError("_can_call_tushare should not be called when rt_k is forbidden")
+
+    monkeypatch.setattr(QuotesIngestionService, "_can_call_tushare", _should_not_call, raising=True)
+
+    quotes_map, source_name = svc._fetch_quotes_from_source("tushare")
+    assert quotes_map is None
+    assert source_name is None

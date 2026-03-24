@@ -36,6 +36,7 @@ class QuotesIngestionService:
         # Tushare 权限检测相关属性
         self._tushare_permission_checked = False  # 是否已检测过权限
         self._tushare_has_premium = False  # 是否有付费权限
+        self._tushare_rt_k_forbidden = False  # 是否已确认无 rt_k 接口权限
         self._tushare_last_call_time = None  # 上次调用时间（用于免费用户限流）
         self._tushare_hourly_limit = 2  # 免费用户每小时最多调用次数
         self._tushare_call_count = 0  # 当前小时内调用次数
@@ -232,17 +233,21 @@ class QuotesIngestionService:
                 if df is not None and not getattr(df, 'empty', True):
                     logger.info("✅ 检测到 Tushare rt_k 接口权限（付费用户）")
                     self._tushare_has_premium = True
+                    self._tushare_rt_k_forbidden = False
                 else:
                     logger.info("⚠️ Tushare rt_k 接口返回空数据（可能是免费用户或接口限制）")
                     self._tushare_has_premium = False
+                    self._tushare_rt_k_forbidden = False
             except Exception as e:
                 error_msg = str(e).lower()
                 if "权限" in error_msg or "permission" in error_msg or "没有访问" in error_msg:
                     logger.info("⚠️ Tushare rt_k 接口无权限（免费用户）")
                     self._tushare_has_premium = False
+                    self._tushare_rt_k_forbidden = True
                 else:
                     logger.warning(f"⚠️ Tushare rt_k 接口测试失败: {e}")
                     self._tushare_has_premium = False
+                    self._tushare_rt_k_forbidden = False
 
             self._tushare_permission_checked = True
             return self._tushare_has_premium or False
@@ -250,6 +255,7 @@ class QuotesIngestionService:
         except Exception as e:
             logger.warning(f"Tushare 权限检测失败: {e}")
             self._tushare_has_premium = False
+            self._tushare_rt_k_forbidden = False
             self._tushare_permission_checked = True
             return False
 
@@ -555,6 +561,11 @@ class QuotesIngestionService:
         """
         try:
             if source_type == "tushare":
+                # 已明确无权限时，直接跳过，避免周期性重复报错
+                if self._tushare_permission_checked and self._tushare_rt_k_forbidden:
+                    logger.info("⏭️ 已确认 Tushare rt_k 无权限，跳过并使用备用数据源")
+                    return None, None
+
                 # 检查是否可以调用 Tushare
                 if not self._can_call_tushare():
                     return None, None
@@ -635,22 +646,50 @@ class QuotesIngestionService:
                         f"当前采集间隔: {settings.QUOTES_INGEST_INTERVAL_SECONDS} 秒"
                     )
 
-            # 获取下一个数据源
-            source_type, akshare_api = self._get_next_source()
+            # 生成本轮采集的尝试顺序：优先按轮换起点，失败时在同一轮内继续尝试备用源
+            source_attempts: List[Tuple[str, Optional[str]]] = []
+            if settings.QUOTES_ROTATION_ENABLED:
+                start_idx = self._rotation_index
+                ordered_sources = [
+                    self._rotation_sources[(start_idx + i) % len(self._rotation_sources)]
+                    for i in range(len(self._rotation_sources))
+                ]
+                # 下一轮从下一个主源开始，保留轮换公平性
+                self._rotation_index = (start_idx + 1) % len(self._rotation_sources)
+            else:
+                ordered_sources = ["tushare", "akshare_eastmoney", "akshare_sina"]
 
-            # 尝试获取行情
-            quotes_map, source_name = await asyncio.to_thread(
-                self._fetch_quotes_from_source,
-                source_type,
-                akshare_api,
-            )
+            for src in ordered_sources:
+                if src == "tushare":
+                    source_attempts.append(("tushare", None))
+                elif src == "akshare_eastmoney":
+                    source_attempts.append(("akshare", "eastmoney"))
+                else:
+                    source_attempts.append(("akshare", "sina"))
+
+            quotes_map: Optional[Dict] = None
+            source_name: Optional[str] = None
+            attempted_sources: List[str] = []
+            for source_type, akshare_api in source_attempts:
+                attempt_name = source_type if not akshare_api else f"{source_type}_{akshare_api}"
+                attempted_sources.append(attempt_name)
+                quotes_map, source_name = await asyncio.to_thread(
+                    self._fetch_quotes_from_source,
+                    source_type,
+                    akshare_api,
+                )
+                if quotes_map:
+                    break
 
             if not quotes_map:
-                logger.warning(f"⚠️ {source_name or source_type} 未获取到行情数据，跳过本次入库")
+                logger.warning(
+                    "⚠️ %s 未获取到行情数据，跳过本次入库",
+                    " -> ".join(attempted_sources),
+                )
                 # 记录失败状态
                 await self._record_sync_status(
                     success=False,
-                    source=source_name or source_type,
+                    source=source_name or (attempted_sources[0] if attempted_sources else None),
                     records_count=0,
                     error_msg="未获取到行情数据"
                 )

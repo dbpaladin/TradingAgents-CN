@@ -244,6 +244,25 @@ class TestParseAiDecision:
         assert action == TradeAction.SELL
 
 
+class TestActionNormalization:
+    def setup_method(self):
+        task = make_test_task()
+        from app.services.backtest_service import BacktestEngine
+        self.engine = BacktestEngine(task)
+
+    def test_normalize_sell_to_hold_when_flat(self):
+        self.engine.position_shares = 0
+        action, reason = self.engine._normalize_action_for_position(TradeAction.SELL, "空仓卖出测试")
+        assert action == TradeAction.HOLD
+        assert "空仓" in reason
+
+    def test_normalize_buy_to_hold_when_already_holding(self):
+        self.engine.position_shares = 1000
+        action, reason = self.engine._normalize_action_for_position(TradeAction.BUY, "持仓买入测试")
+        assert action == TradeAction.HOLD
+        assert "已有持仓" in reason
+
+
 class TestBacktestModelRouting:
     @pytest.mark.asyncio
     async def test_run_ai_analysis_uses_model_provider_instead_of_hardcoded_dashscope(self):
@@ -682,6 +701,47 @@ class TestBacktestRuleFallback:
         executed_actions = [t.action for t in result.trades if t.executed]
         assert TradeAction.BUY in executed_actions
         assert TradeAction.SELL in executed_actions
+
+    @pytest.mark.asyncio
+    async def test_run_entry_guardrail_breaks_flat_sell_hold_deadlock(self):
+        from app.services.backtest_service import BacktestEngine
+
+        task = make_test_task(start_date="2024-03-01", end_date="2024-03-05")
+        task.config.decision_interval_days = 1
+        engine = BacktestEngine(task)
+
+        trading_days = [
+            "2024-03-01",
+            "2024-03-04",
+            "2024-03-05",
+        ]
+
+        engine._update_progress = AsyncMock()
+        engine._get_trading_calendar = AsyncMock(return_value=trading_days)
+        engine._warmup_market_data = AsyncMock()
+        engine._get_analysis_runtime = MagicMock(return_value={
+            "runtime_mode": "primary",
+            "quick_timeout": 180,
+            "deep_timeout": 180,
+            "config": {},
+            "reuse_graph": False,
+            "selected_analysts": ["market"],
+        })
+        engine._get_stock_price = AsyncMock(side_effect=[10.0, 10.1, 10.3])
+        engine._get_benchmark_price = AsyncMock(side_effect=[3000.0, 3000.0, 3010.0, 3020.0])
+        engine._run_ai_analysis = AsyncMock(side_effect=[
+            {"action": "SELL", "confidence": 0.7, "summary": "首日看空"},
+            {"action": "HOLD", "confidence": 0.6, "summary": "次日观望"},
+            {"action": "SELL", "confidence": 0.8, "summary": "第三日减仓"},
+        ])
+
+        result = await engine.run()
+
+        executed_actions = [t.action for t in result.trades if t.executed]
+        assert TradeAction.BUY in executed_actions
+        assert TradeAction.SELL in executed_actions
+        assert all(t.ai_signal != "DIAGNOSTIC" for t in result.trades)
+        assert any("入场保护" in (t.ai_reason or "") for t in result.trades)
 
 
 class TestBacktestAutoOptimization:

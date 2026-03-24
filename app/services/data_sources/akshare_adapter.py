@@ -289,7 +289,19 @@ class AKShareAdapter(DataSourceAdapter):
             return result
 
         except Exception as e:
-            logger.error(f"获取AKShare {source} 实时快照失败: {e}")
+            error_text = str(e)
+            lowered = error_text.lower()
+            transient_keywords = [
+                "remote end closed connection",
+                "connection aborted",
+                "timed out",
+                "read timed out",
+                "connect timeout",
+            ]
+            if any(keyword in lowered for keyword in transient_keywords):
+                logger.warning(f"AKShare {source} 实时快照临时失败，已尝试降级: {error_text}")
+            else:
+                logger.error(f"获取AKShare {source} 实时快照失败: {error_text}")
             return None
 
     def get_kline(self, code: str, period: str = "day", limit: int = 120, adj: Optional[str] = None):
@@ -389,4 +401,3 @@ class AKShareAdapter(DataSourceAdapter):
         yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
         logger.info(f"AKShare: Using yesterday as trade date: {yesterday}")
         return yesterday
-
