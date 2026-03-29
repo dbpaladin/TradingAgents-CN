@@ -24,15 +24,22 @@ from tradingagents.utils.logging_manager import get_logger
 logger = get_logger('agents')
 
 
-def create_msg_delete():
+def create_msg_delete(parallel_safe: bool = False):
     def delete_messages(state):
-        """
-        DO NOT delete messages. 
-        In parallel execution, multiple analysts hit this node at the same time
-        and attempt to RemoveMessage the exact same IDs, which causes LangGraph 
-        to crash with 'Attempting to delete a message with an ID that doesn't exist'.
-        """
-        return {}
+        """Clear branch messages unless the caller explicitly opts into parallel-safe mode."""
+        if parallel_safe:
+            # Parallel analyst branches share the same message reducer. Deleting the
+            # same IDs from multiple branches can trigger LangGraph remove conflicts.
+            return {}
+
+        messages = state["messages"]
+
+        # Remove all branch messages, then keep a tiny placeholder so downstream LLM
+        # calls don't inherit other analysts' tool-call history.
+        removal_operations = [RemoveMessage(id=m.id) for m in messages]
+        placeholder = HumanMessage(content="Continue")
+
+        return {"messages": removal_operations + [placeholder]}
     
     return delete_messages
 

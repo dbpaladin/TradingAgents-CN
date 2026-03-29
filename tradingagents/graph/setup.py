@@ -210,17 +210,17 @@ class GraphSetup:
         workflow.add_node("Risk Judge", risk_manager_node)
 
         # Define edges
-        # P0 优化：所有分析师从 START 并行启动（替代原来的串行连接）
-        # 分析师之间无数据依赖，各自写入独立的 report key，可安全并行
-        for analyst_type in selected_analysts:
+        # 单股/正式分析保持串行执行。分析师共用 messages 状态，
+        # 并行时会混入彼此的 tool-call 历史，导致后续 LLM 请求报
+        # "No tool output found for function call ..."。
+        first_analyst = selected_analysts[0]
+        workflow.add_edge(START, f"{first_analyst.capitalize()} Analyst")
+
+        for i, analyst_type in enumerate(selected_analysts):
             current_analyst = f"{analyst_type.capitalize()} Analyst"
             current_tools = f"tools_{analyst_type}"
             current_clear = f"Msg Clear {analyst_type.capitalize()}"
 
-            # 从 START 并行启动每个分析师
-            workflow.add_edge(START, current_analyst)
-
-            # 分析师内部循环：Analyst → tools → Analyst（工具调用）或 Analyst → Msg Clear（完成）
             workflow.add_conditional_edges(
                 current_analyst,
                 getattr(self.conditional_logic, f"should_continue_{analyst_type}"),
@@ -228,9 +228,11 @@ class GraphSetup:
             )
             workflow.add_edge(current_tools, current_analyst)
 
-            # 所有分析师的 Msg Clear 汇入 Bull Researcher
-            # LangGraph 多源边会等待所有前驱完成后再触发目标节点
-            workflow.add_edge(current_clear, "Bull Researcher")
+            if i < len(selected_analysts) - 1:
+                next_analyst = f"{selected_analysts[i + 1].capitalize()} Analyst"
+                workflow.add_edge(current_clear, next_analyst)
+            else:
+                workflow.add_edge(current_clear, "Bull Researcher")
 
         # Add remaining edges
         workflow.add_conditional_edges(
@@ -312,7 +314,7 @@ class GraphSetup:
         for analyst_type in selected_analysts:
             if analyst_type in analyst_creators:
                 analyst_nodes[analyst_type] = analyst_creators[analyst_type]()
-                delete_nodes[analyst_type] = create_msg_delete()
+                delete_nodes[analyst_type] = create_msg_delete(parallel_safe=True)
                 tool_nodes[analyst_type] = self.tool_nodes[analyst_type]
 
         # 创建工作流
