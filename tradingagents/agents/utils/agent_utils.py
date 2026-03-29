@@ -26,16 +26,13 @@ logger = get_logger('agents')
 
 def create_msg_delete():
     def delete_messages(state):
-        """Clear messages and add placeholder for Anthropic compatibility"""
-        messages = state["messages"]
-        
-        # Remove all messages
-        removal_operations = [RemoveMessage(id=m.id) for m in messages]
-        
-        # Add a minimal placeholder message
-        placeholder = HumanMessage(content="Continue")
-        
-        return {"messages": removal_operations + [placeholder]}
+        """
+        DO NOT delete messages. 
+        In parallel execution, multiple analysts hit this node at the same time
+        and attempt to RemoveMessage the exact same IDs, which causes LangGraph 
+        to crash with 'Attempting to delete a message with an ID that doesn't exist'.
+        """
+        return {}
     
     return delete_messages
 

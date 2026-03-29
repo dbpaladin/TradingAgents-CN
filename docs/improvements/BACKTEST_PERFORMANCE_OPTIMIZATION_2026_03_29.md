@@ -25,6 +25,11 @@
     - 在 `backtest_service.py` 中对进度更新进行节流。进度变化小于 5% 且未达到 95% 时，不写入 MongoDB，仅触发内存回调。
 - **预期提速**: 5-10%。
 
+### Bug Fix: 并行状态下 Msg Clear 冲突修复 (2026-03-29)
+- **改动文件**: `tradingagents/agents/utils/agent_utils.py`
+- **问题描述**: 实施 P0 优化后，并行执行的分析师由于使用全局共享的 `messages` 列表，在同时进入 `Msg Clear` 节点时会尝试 `RemoveMessage` 相同的 Message IDs，导致合并状态时 LangGraph 抛出 `ValueError: Attempting to delete a message with an ID that doesn't exist` 崩溃。
+- **修复逻辑**: 修改 `create_msg_delete()` 函数，令其在清空消息节点时返回空字典 `{}` 而非删除指令。由于现有的报告生成架构（特别是针对 Google Models）已经做了基于角色的消息提取与截断（`_optimize_message_sequence`），因此保留并行时期的中间 `messages` 不会造成上下文溢出，且能够完美避开 LangGraph 并行状态下的增删冲突问题。
+
 ## 3. 性能对比预估
 
 | 场景 | 优化前 (Est.) | 优化后 (Est.) |
