@@ -210,17 +210,17 @@ class GraphSetup:
         workflow.add_node("Risk Judge", risk_manager_node)
 
         # Define edges
-        # Start with the first analyst
-        first_analyst = selected_analysts[0]
-        workflow.add_edge(START, f"{first_analyst.capitalize()} Analyst")
-
-        # Connect analysts in sequence
-        for i, analyst_type in enumerate(selected_analysts):
+        # P0 优化：所有分析师从 START 并行启动（替代原来的串行连接）
+        # 分析师之间无数据依赖，各自写入独立的 report key，可安全并行
+        for analyst_type in selected_analysts:
             current_analyst = f"{analyst_type.capitalize()} Analyst"
             current_tools = f"tools_{analyst_type}"
             current_clear = f"Msg Clear {analyst_type.capitalize()}"
 
-            # Add conditional edges for current analyst
+            # 从 START 并行启动每个分析师
+            workflow.add_edge(START, current_analyst)
+
+            # 分析师内部循环：Analyst → tools → Analyst（工具调用）或 Analyst → Msg Clear（完成）
             workflow.add_conditional_edges(
                 current_analyst,
                 getattr(self.conditional_logic, f"should_continue_{analyst_type}"),
@@ -228,12 +228,9 @@ class GraphSetup:
             )
             workflow.add_edge(current_tools, current_analyst)
 
-            # Connect to next analyst or to Bull Researcher if this is the last analyst
-            if i < len(selected_analysts) - 1:
-                next_analyst = f"{selected_analysts[i+1].capitalize()} Analyst"
-                workflow.add_edge(current_clear, next_analyst)
-            else:
-                workflow.add_edge(current_clear, "Bull Researcher")
+            # 所有分析师的 Msg Clear 汇入 Bull Researcher
+            # LangGraph 多源边会等待所有前驱完成后再触发目标节点
+            workflow.add_edge(current_clear, "Bull Researcher")
 
         # Add remaining edges
         workflow.add_conditional_edges(
@@ -283,3 +280,181 @@ class GraphSetup:
 
         # Compile and return
         return workflow.compile()
+
+    def setup_backtest_graph(
+        self, selected_analysts=["market", "social", "news", "fundamentals"]
+    ):
+        """P1 优化：回测专用轻量图
+
+        分析师并行 → 单次 LLM 综合决策（跳过 Bull/Bear 辩论 + 风险三方讨论）
+        适用于回测场景：只需 BUY/SELL/HOLD 方向信号，不需要完整的多轮讨论。
+        预计减少 ~8 次 LLM 调用 / 天。
+        """
+        if len(selected_analysts) == 0:
+            raise ValueError("Trading Agents Graph Setup Error: no analysts selected!")
+
+        # ---- 复用 setup_graph 的分析师节点创建逻辑 ----
+        analyst_nodes = {}
+        delete_nodes = {}
+        tool_nodes = {}
+
+        analyst_creators = {
+            "market": lambda: create_market_analyst(self.quick_thinking_llm, self.toolkit),
+            "social": lambda: create_social_media_analyst(self.quick_thinking_llm, self.toolkit),
+            "emotion": lambda: create_a_share_sentiment_analyst(self.quick_thinking_llm, self.toolkit),
+            "fund_flow": lambda: create_fund_flow_analyst(self.quick_thinking_llm, self.toolkit),
+            "theme_rotation": lambda: create_theme_rotation_analyst(self.quick_thinking_llm, self.toolkit),
+            "institutional_theme": lambda: create_institutional_theme_analyst(self.quick_thinking_llm, self.toolkit),
+            "news": lambda: create_news_analyst(self.quick_thinking_llm, self.toolkit),
+            "fundamentals": lambda: create_fundamentals_analyst(self.quick_thinking_llm, self.toolkit),
+        }
+
+        for analyst_type in selected_analysts:
+            if analyst_type in analyst_creators:
+                analyst_nodes[analyst_type] = analyst_creators[analyst_type]()
+                delete_nodes[analyst_type] = create_msg_delete()
+                tool_nodes[analyst_type] = self.tool_nodes[analyst_type]
+
+        # 创建工作流
+        workflow = StateGraph(AgentState)
+
+        # 添加分析师节点
+        for analyst_type, node in analyst_nodes.items():
+            workflow.add_node(f"{analyst_type.capitalize()} Analyst", node)
+            workflow.add_node(
+                f"Msg Clear {analyst_type.capitalize()}", delete_nodes[analyst_type]
+            )
+            workflow.add_node(f"tools_{analyst_type}", tool_nodes[analyst_type])
+
+        # 添加回测决策节点
+        backtest_decision_node = self._create_backtest_decision_node()
+        workflow.add_node("Backtest Decision", backtest_decision_node)
+
+        # 定义边：分析师并行执行 → 汇入决策节点
+        for analyst_type in selected_analysts:
+            if analyst_type not in analyst_nodes:
+                continue
+            current_analyst = f"{analyst_type.capitalize()} Analyst"
+            current_tools = f"tools_{analyst_type}"
+            current_clear = f"Msg Clear {analyst_type.capitalize()}"
+
+            workflow.add_edge(START, current_analyst)
+            workflow.add_conditional_edges(
+                current_analyst,
+                getattr(self.conditional_logic, f"should_continue_{analyst_type}"),
+                [current_tools, current_clear],
+            )
+            workflow.add_edge(current_tools, current_analyst)
+            workflow.add_edge(current_clear, "Backtest Decision")
+
+        workflow.add_edge("Backtest Decision", END)
+
+        logger.info(
+            "🚀 [回测轻量图] 已构建: 分析师=%s → Backtest Decision → END (跳过辩论+风控)",
+            list(analyst_nodes.keys()),
+        )
+        return workflow.compile()
+
+    def _create_backtest_decision_node(self):
+        """创建回测决策节点的工厂方法
+
+        该节点综合所有分析师报告，通过单次 LLM 调用直接输出 BUY/SELL/HOLD 决策。
+        替代完整流程中的 Bull/Bear 辩论 + Research Manager + Trader + 风险三方讨论 + Risk Judge。
+        """
+        llm = self.quick_thinking_llm
+
+        def backtest_decision(state: AgentState):
+            """回测轻量决策：综合分析师报告 → 直接输出交易信号"""
+            import time as _time
+            start_time = _time.time()
+
+            company = state.get("company_of_interest", "未知")
+            trade_date = state.get("trade_date", "未知")
+
+            # 收集所有分析师报告（截断以控制 token）
+            report_keys = [
+                ("市场分析", "market_report"),
+                ("基本面", "fundamentals_report"),
+                ("新闻", "news_report"),
+                ("社交舆情", "sentiment_report"),
+                ("A股情绪", "a_share_sentiment_report"),
+                ("资金流向", "fund_flow_report"),
+                ("题材轮动", "theme_rotation_report"),
+                ("机构布局", "institutional_theme_report"),
+            ]
+
+            reports_text = []
+            for label, key in report_keys:
+                content = state.get(key, "")
+                if content and len(content.strip()) > 10:
+                    # 截断到 400 字符以控制总 token 量
+                    truncated = content.strip()[:400]
+                    reports_text.append(f"【{label}】\n{truncated}")
+
+            if not reports_text:
+                logger.warning(f"⚠️ [回测决策] {company} {trade_date} 无分析师报告，默认 HOLD")
+                return {
+                    "final_trade_decision": "HOLD - 无分析师报告可用",
+                    "investment_plan": "无数据，建议持有观望",
+                    "trader_investment_plan": "HOLD",
+                    "investment_debate_state": {
+                        "bull_history": "", "bear_history": "", "history": "",
+                        "current_response": "Backtest Decision", "judge_decision": "HOLD",
+                        "count": 0,
+                    },
+                    "risk_debate_state": {
+                        "risky_history": "", "safe_history": "", "neutral_history": "",
+                        "history": "", "latest_speaker": "Backtest Decision",
+                        "current_risky_response": "", "current_safe_response": "",
+                        "current_neutral_response": "", "judge_decision": "HOLD",
+                        "count": 0,
+                    },
+                }
+
+            combined_reports = "\n---\n".join(reports_text)
+
+            prompt = f"""你是一位专业的A股交易决策助手。根据以下分析师报告，为 {company} 在 {trade_date} 做出交易决策。
+
+{combined_reports}
+
+请直接给出交易建议，格式要求：
+1. 第一行必须是: BUY 或 SELL 或 HOLD
+2. 第二行给出简要理由（不超过100字）
+3. 第三行给出置信度（0-1之间的数字）
+
+只输出以上3行，不要附加其他内容。"""
+
+            try:
+                response = llm.invoke(prompt)
+                decision_text = response.content.strip() if hasattr(response, 'content') else str(response).strip()
+                logger.info(f"✅ [回测决策] {company} {trade_date}: {decision_text[:80]}...")
+            except Exception as e:
+                logger.error(f"❌ [回测决策] LLM 调用失败: {e}")
+                decision_text = "HOLD\nLLM调用失败，默认持有\n0.3"
+
+            elapsed = _time.time() - start_time
+            logger.info(f"⏱️ [Backtest Decision] 耗时: {elapsed:.2f}秒")
+
+            return {
+                "final_trade_decision": decision_text,
+                "investment_plan": f"回测快速决策: {decision_text[:200]}",
+                "trader_investment_plan": decision_text.split('\n')[0] if decision_text else "HOLD",
+                "investment_debate_state": {
+                    "bull_history": "", "bear_history": "",
+                    "history": f"回测快速决策模式 - 跳过辩论",
+                    "current_response": "Backtest Decision",
+                    "judge_decision": decision_text.split('\n')[0] if decision_text else "HOLD",
+                    "count": 0,
+                },
+                "risk_debate_state": {
+                    "risky_history": "", "safe_history": "", "neutral_history": "",
+                    "history": f"回测快速决策模式 - 跳过风控讨论",
+                    "latest_speaker": "Backtest Decision",
+                    "current_risky_response": "", "current_safe_response": "",
+                    "current_neutral_response": "",
+                    "judge_decision": decision_text.split('\n')[0] if decision_text else "HOLD",
+                    "count": 0,
+                },
+            }
+
+        return backtest_decision

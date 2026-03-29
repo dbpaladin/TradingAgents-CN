@@ -100,6 +100,8 @@ class BacktestEngine:
         self._consecutive_ai_failures = 0
         self._rule_mode_enabled = False
         self._rule_mode_reason = ""
+        # P3 优化：进度更新节流
+        self._last_reported_progress = 0
 
         # 账户状态
         self.cash = self.config.initial_capital
@@ -275,6 +277,8 @@ class BacktestEngine:
         adjusted["max_debate_rounds"] = min(int(adjusted.get("max_debate_rounds", 1) or 1), 1)
         adjusted["max_risk_discuss_rounds"] = min(int(adjusted.get("max_risk_discuss_rounds", 1) or 1), 1)
         adjusted["online_tools"] = True
+        # P1 优化：启用回测轻量图模式（跳过辩论+风控，单次 LLM 决策）
+        adjusted["backtest_mode"] = True
         return adjusted
 
     def _estimate_runtime_analyst_weight(self, analysts: List[str]) -> int:
@@ -408,7 +412,13 @@ class BacktestEngine:
         self._reusable_trading_graphs.clear()
 
     async def _update_progress(self, progress: int, current_date: str, message: str):
-        """更新进度"""
+        """更新进度（P3 优化：节流写入，进度变化 < 5% 且未到 95% 时跳过 DB 写入）"""
+        if abs(progress - self._last_reported_progress) < 5 and progress < 95:
+            # 仍然触发内存回调（如果有的话），但跳过 MongoDB 写入
+            if self.progress_callback:
+                self.progress_callback(progress, current_date, message)
+            return
+        self._last_reported_progress = progress
         db = get_mongo_db()
         await db.backtest_tasks.update_one(
             {"task_id": self.task.task_id},

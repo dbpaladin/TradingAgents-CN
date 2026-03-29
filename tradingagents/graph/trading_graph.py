@@ -870,7 +870,12 @@ class TradingAgentsGraph:
         self.log_states_dict = {}  # date to full state dict
 
         # Set up the graph using normalized alias
-        self.graph = self.graph_setup.setup_graph(self.selected_analysts)
+        # P1 优化：回测模式使用轻量图（跳过辩论+风控，单次 LLM 决策）
+        if self.config.get("backtest_mode"):
+            logger.info("🚀 [回测模式] 使用轻量决策图（跳过辩论+风控，单次 LLM 决策）")
+            self.graph = self.graph_setup.setup_backtest_graph(self.selected_analysts)
+        else:
+            self.graph = self.graph_setup.setup_graph(self.selected_analysts)
 
     def _create_tool_nodes(self) -> Dict[str, ToolNode]:
         """Create tool nodes for different data sources.
