@@ -30,6 +30,10 @@
 - **问题描述**: 实施 P0 优化后，并行执行的分析师由于使用全局共享的 `messages` 列表，在同时进入 `Msg Clear` 节点时会尝试 `RemoveMessage` 相同的 Message IDs，导致合并状态时 LangGraph 抛出 `ValueError: Attempting to delete a message with an ID that doesn't exist` 崩溃。
 - **修复逻辑**: 修改 `create_msg_delete()` 函数，令其在清空消息节点时返回空字典 `{}` 而非删除指令。由于现有的报告生成架构（特别是针对 Google Models）已经做了基于角色的消息提取与截断（`_optimize_message_sequence`），因此保留并行时期的中间 `messages` 不会造成上下文溢出，且能够完美避开 LangGraph 并行状态下的增删冲突问题。
 
+### Bug Fix: TypeError NoneType is not iterable (2026-03-29)
+- **改动文件**: `tradingagents/graph/trading_graph.py`
+- **问题描述**: 实施并行化及 `Msg Clear` 返回 `{}` 调整后，工具节点（如 `tools_theme_rotation`）可能由于直接执行而给 LangGraph 抛回 `None` 作为节点的 `state_update`。此时在 `trading_graph.py` 内部 `final_state.update(node_update)` 遇到了 `update(None)`，抛出 `TypeError: 'NoneType' object is not iterable` 异常。
+- **修复逻辑**: 在 `_run_analysis_sync` / `propagate` 的流式执行循环内部，增加对 `node_update is not None` 的防御性校验。如果某节点异常返回了 `None`，则直接通过 `logger.warning` 忽略不合并，进而保证并行任务正常完成。
 ## 3. 性能对比预估
 
 | 场景 | 优化前 (Est.) | 优化后 (Est.) |

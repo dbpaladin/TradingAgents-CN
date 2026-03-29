@@ -1013,7 +1013,10 @@ class TradingAgentsGraph:
                             current_node_name = node_name
                             current_node_start = time.time()
                             logger.info(f"🔍 [TIMING DEBUG] 执行节点: {node_name}")
-                            final_state.update(node_update)
+                            if node_update is not None:
+                                final_state.update(node_update)
+                            else:
+                                logger.warning(f"⚠️ [GRAPH WARNING] 节点 {node_name} 返回了 None，跳过状态更新")
                     
                     if progress_callback:
                         self._send_progress_update(chunk, progress_callback)
@@ -1039,7 +1042,10 @@ class TradingAgentsGraph:
 
                             current_node_name = node_name
                             current_node_start = time.time()
-                            final_state.update(node_update)
+                            if node_update is not None:
+                                final_state.update(node_update)
+                            else:
+                                logger.warning(f"⚠️ [GRAPH WARNING] 节点 {node_name} 返回了 None，跳过状态更新")
                     
                     self._send_progress_update(chunk, progress_callback)
             else:
@@ -1063,7 +1069,10 @@ class TradingAgentsGraph:
 
                             current_node_name = node_name
                             current_node_start = time.time()
-                            final_state.update(node_update)
+                            if node_update is not None:
+                                final_state.update(node_update)
+                            else:
+                                logger.warning(f"⚠️ [GRAPH WARNING] 节点 {node_name} 返回了 None，跳过状态更新")
 
         # 记录最后一个节点的时间
         if current_node_name and current_node_start:
