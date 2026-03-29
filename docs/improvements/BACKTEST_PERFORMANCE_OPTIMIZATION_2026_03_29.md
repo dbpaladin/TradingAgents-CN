@@ -34,6 +34,21 @@
 - **改动文件**: `tradingagents/graph/trading_graph.py`
 - **问题描述**: 实施并行化及 `Msg Clear` 返回 `{}` 调整后，工具节点（如 `tools_theme_rotation`）可能由于直接执行而给 LangGraph 抛回 `None` 作为节点的 `state_update`。此时在 `trading_graph.py` 内部 `final_state.update(node_update)` 遇到了 `update(None)`，抛出 `TypeError: 'NoneType' object is not iterable` 异常。
 - **修复逻辑**: 在 `_run_analysis_sync` / `propagate` 的流式执行循环内部，增加对 `node_update is not None` 的防御性校验。如果某节点异常返回了 `None`，则直接通过 `logger.warning` 忽略不合并，进而保证并行任务正常完成。
+
+### Bug Fix: 单股分析并行消息污染修复 (2026-03-29)
+- **改动文件**: `tradingagents/graph/setup.py`, `tradingagents/agents/utils/agent_utils.py`, `tests/test_msg_delete_behavior.py`
+- **问题描述**: 虽然 `Msg Clear -> {}` 规避了并行 `RemoveMessage` 冲突，但正式单股分析图中的多个分析师仍共享同一份 `messages`。一旦某个分析师完成首轮工具调用后再次请求 LLM，就可能读到其他分支残留的 tool call 记录，最终触发 OpenAI 兼容接口报错：`No tool output found for function call ...`。
+- **修复逻辑**:
+  - 正式单股分析图 `setup_graph()` 恢复为串行分析师执行，避免跨分析师消息污染。
+  - `create_msg_delete()` 改为双模式：
+    - 默认模式执行真实消息清理，供正式分析链路使用。
+    - `parallel_safe=True` 时返回 `{}`，仅供回测轻量并行图使用。
+  - 新增测试覆盖两种消息清理行为。
+
+### 最终结论
+- **回测轻量图**: 保留分析师并行执行，性能优化继续生效。
+- **正式单股分析图**: 暂时保持串行，优先保证工具调用上下文正确。
+- **后续优化方向**: 若要让正式分析重新并行，需要先把 `messages` 从全局共享状态重构为按分析师分支隔离。
 ## 3. 性能对比预估
 
 | 场景 | 优化前 (Est.) | 优化后 (Est.) |
