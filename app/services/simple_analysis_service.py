@@ -6,8 +6,9 @@
 import asyncio
 import uuid
 import logging
+import re
 from datetime import datetime
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 from pathlib import Path
 import sys
 
@@ -681,6 +682,118 @@ class SimpleAnalysisService:
         except Exception as e:
             logger.warning(f"⚠️ 补齐股票名称时出现异常: {e}")
         return tasks
+
+    def _normalize_action(self, raw_action: Optional[str]) -> Optional[str]:
+        """将动作文本归一化为：买入 / 卖出 / 持有"""
+        if not raw_action:
+            return None
+
+        text = str(raw_action).strip()
+        text_upper = text.upper()
+
+        direct_map = {
+            "BUY": "买入",
+            "SELL": "卖出",
+            "HOLD": "持有",
+            "买入": "买入",
+            "增持": "买入",
+            "加仓": "买入",
+            "建仓": "买入",
+            "卖出": "卖出",
+            "减仓": "卖出",
+            "清仓": "卖出",
+            "止盈": "卖出",
+            "止损": "卖出",
+            "持有": "持有",
+            "观望": "持有",
+            "等待": "持有",
+            "不操作": "持有",
+        }
+
+        if text_upper in direct_map:
+            return direct_map[text_upper]
+        if text in direct_map:
+            return direct_map[text]
+
+        # 兼容“卖出（或减仓）”这类短语，但避免在长正文中误判
+        if len(text) <= 30:
+            if re.search(r"(买入|增持|加仓|建仓|BUY)", text, re.IGNORECASE):
+                return "买入"
+            if re.search(r"(卖出|减仓|清仓|止盈|止损|SELL)", text, re.IGNORECASE):
+                return "卖出"
+            if re.search(r"(持有|观望|等待|不操作|HOLD)", text, re.IGNORECASE):
+                return "持有"
+        return None
+
+    def _extract_action_from_text(self, text: Optional[str]) -> Optional[str]:
+        """从报告正文中提取动作结论"""
+        if not text or not isinstance(text, str):
+            return None
+
+        # 优先：识别显式标签，避免正文出现多个动作词时误判
+        match = re.search(
+            r"(最终建议|投资建议|操作建议|建议|结论)\s*[:：]\s*([^\n。；;]{1,30})",
+            text,
+            re.IGNORECASE
+        )
+        if match:
+            explicit_action = self._normalize_action(match.group(2))
+            if explicit_action:
+                return explicit_action
+
+        # 次优：只看首行/前120字符，降低正文噪声影响
+        first_line = text.splitlines()[0] if text.splitlines() else text
+        short_text = first_line[:120]
+        if self._normalize_action(short_text):
+            return self._normalize_action(short_text)
+
+        # 兜底：扫描短文本中的动作词
+        if re.search(r"(买入|增持|加仓|建仓|BUY)", short_text, re.IGNORECASE):
+            return "买入"
+        if re.search(r"(卖出|减仓|清仓|止盈|止损|SELL)", short_text, re.IGNORECASE):
+            return "卖出"
+        if re.search(r"(持有|观望|等待|不操作|HOLD)", short_text, re.IGNORECASE):
+            return "持有"
+        return None
+
+    def _reconcile_report_actions(
+        self,
+        reports: Dict[str, Any],
+        decision: Dict[str, Any]
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """
+        对齐 final_trade_decision / trader_investment_plan / decision.action。
+        规则：最终决策优先，其次 decision.action，再次投资计划。
+        """
+        if not isinstance(reports, dict):
+            reports = {}
+        if not isinstance(decision, dict):
+            decision = {}
+
+        final_action = self._extract_action_from_text(reports.get("final_trade_decision"))
+        plan_action = self._extract_action_from_text(reports.get("trader_investment_plan"))
+        decision_action = self._normalize_action(decision.get("action"))
+
+        canonical_action = final_action or decision_action or plan_action
+        if not canonical_action:
+            return reports, decision
+
+        decision["action"] = canonical_action
+
+        # 若交易计划与最终决策冲突，添加校正说明，避免读者误解
+        if plan_action and plan_action != canonical_action and isinstance(reports.get("trader_investment_plan"), str):
+            correction_note = (
+                "## 一致性校正说明\n"
+                f"- 检测到本节原始动作为「{plan_action}」，与最终交易决策「{canonical_action}」不一致。\n"
+                f"- 以最终交易决策为准：**{canonical_action}**。\n\n"
+            )
+            if not reports["trader_investment_plan"].startswith("## 一致性校正说明"):
+                reports["trader_investment_plan"] = correction_note + reports["trader_investment_plan"]
+            logger.warning(
+                f"⚠️ [一致性修复] trader_investment_plan({plan_action}) -> final_trade_decision({canonical_action})"
+            )
+
+        return reports, decision
 
     def _convert_user_id(self, user_id: str) -> PyObjectId:
         """将字符串用户ID转换为PyObjectId"""
@@ -1732,6 +1845,9 @@ class SimpleAnalysisService:
                     'reasoning': '暂无分析推理'
                 }
 
+            # 🔧 对齐报告结论与结构化决策，避免“最终决策”和“投资计划”冲突
+            reports, formatted_decision = self._reconcile_report_actions(reports, formatted_decision)
+
             # 🔥 按照web目录的方式生成summary和recommendation
             summary = ""
             recommendation = ""
@@ -2538,6 +2654,11 @@ class SimpleAnalysisService:
                                 logger.info(f"📊 降级：从detailed_analysis中提取到 {len(reports)} 个报告")
                         except Exception as fallback_error:
                             logger.warning(f"⚠️ 降级提取也失败: {fallback_error}")
+
+            # 🔧 再次执行一致性对齐，确保落库文档与任务result动作保持一致
+            result_decision = result.get("decision", {})
+            reports, result_decision = self._reconcile_report_actions(reports, result_decision)
+            result["decision"] = result_decision
 
             # 🔥 根据股票代码推断市场类型
             from tradingagents.utils.stock_utils import StockUtils
