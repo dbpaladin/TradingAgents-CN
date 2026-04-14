@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Iterable
 import re
@@ -127,12 +128,19 @@ class ChineseFinanceDataAggregator:
                     "sentiment_score": 0,
                     "discussion_count": 0,
                     "hot_topics": [],
+                    "sample_titles": [],
+                    "platform_breakdown": {},
+                    "extreme_ratio": 0.0,
+                    "heat_level": "低热度",
                     "note": "未获取到有效社媒/论坛缓存数据，当前论坛情绪不计入加权",
                     "confidence": 0,
                 }
 
             scores = []
             hot_topics = []
+            sample_titles: List[str] = []
+            platform_counter: Dict[str, int] = {}
+            extreme_count = 0
             for item in social_items:
                 text = " ".join(
                     str(item.get(field, "")).strip()
@@ -140,14 +148,24 @@ class ChineseFinanceDataAggregator:
                 ).strip()
                 if not text:
                     continue
+                if len(sample_titles) < 6:
+                    sample_titles.append(str(item.get("title") or text[:80]))
                 scores.append(self._analyze_text_sentiment(text))
                 hot_topics.extend(self._extract_hot_topics(text))
+                platform = str(item.get("platform") or item.get("source") or "unknown").strip()
+                platform_counter[platform] = platform_counter.get(platform, 0) + 1
+                if self._contains_extreme_word(text):
+                    extreme_count += 1
 
             if not scores:
                 return {
                     "sentiment_score": 0,
                     "discussion_count": len(social_items),
                     "hot_topics": [],
+                    "sample_titles": sample_titles,
+                    "platform_breakdown": platform_counter,
+                    "extreme_ratio": 0.0,
+                    "heat_level": self._classify_heat_level(len(social_items)),
                     "confidence": 0,
                 }
 
@@ -156,10 +174,16 @@ class ChineseFinanceDataAggregator:
                 if topic not in unique_topics:
                     unique_topics.append(topic)
 
+            discussion_count = len(social_items)
+            extreme_ratio = extreme_count / max(len(scores), 1)
             return {
                 "sentiment_score": sum(scores) / len(scores),
-                "discussion_count": len(social_items),
+                "discussion_count": discussion_count,
                 "hot_topics": unique_topics[:5],
+                "sample_titles": sample_titles,
+                "platform_breakdown": platform_counter,
+                "extreme_ratio": extreme_ratio,
+                "heat_level": self._classify_heat_level(discussion_count),
                 "confidence": min(len(scores) / 20, 1.0),
             }
 
@@ -263,15 +287,36 @@ class ChineseFinanceDataAggregator:
 
     def _get_social_media_items(self, ticker: str, days: int) -> List[Dict]:
         """获取社媒/论坛缓存数据"""
+        normalized_ticker = str(ticker).zfill(6) if str(ticker).isdigit() else str(ticker)
+
+        # 1. 优先读取 MongoDB 社媒缓存
         try:
             from tradingagents.dataflows.cache.mongodb_cache_adapter import get_mongodb_cache_adapter
 
             adapter = get_mongodb_cache_adapter()
-            items = adapter.get_social_media_data(ticker, hours_back=max(days * 24, 24), limit=50)
+            items = adapter.get_social_media_data(normalized_ticker, hours_back=max(days * 24, 24), limit=80)
             if items:
                 return self._normalize_news_items(items, default_source="social_cache")
         except Exception as e:
             logger.debug(f"[中文情绪] 社媒缓存读取失败: {e}")
+
+        # 2. 缓存为空时，尝试实时抓取公开论坛（默认开启）
+        live_enabled = os.getenv("CN_SOCIAL_LIVE_FETCH_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
+        if live_enabled:
+            try:
+                from tradingagents.dataflows.news.cn_social_sentiment import fetch_cn_social_posts
+
+                company_name = self._get_company_chinese_name(ticker) or ""
+                live_items = fetch_cn_social_posts(
+                    ticker=normalized_ticker,
+                    company_name=company_name,
+                    max_posts_per_source=40,
+                )
+                if live_items:
+                    logger.info(f"[中文情绪] 实时抓取社媒样本成功: {len(live_items)} 条")
+                    return self._normalize_news_items(live_items, default_source="social_live")
+            except Exception as e:
+                logger.debug(f"[中文情绪] 实时社媒抓取失败: {e}")
         return []
 
     def _normalize_news_items(self, items: Iterable[Dict], default_source: str) -> List[Dict]:
@@ -299,6 +344,7 @@ class ChineseFinanceDataAggregator:
             )
             url = str(item.get("url") or item.get("新闻链接") or "").strip()
             item_type = str(item.get("type") or "news").strip()
+            platform = str(item.get("platform") or "").strip()
 
             if not title and not content:
                 continue
@@ -309,6 +355,7 @@ class ChineseFinanceDataAggregator:
                     "content": content,
                     "summary": content,
                     "source": source,
+                    "platform": platform,
                     "publish_time": str(publish_time or ""),
                     "_sort_time": self._parse_datetime(publish_time),
                     "url": url,
@@ -380,6 +427,20 @@ class ChineseFinanceDataAggregator:
             return 0
 
         return (positive_count - negative_count) / (positive_count + negative_count)
+
+    def _contains_extreme_word(self, text: str) -> bool:
+        extreme_words = ["梭哈", "满仓", "all in", "清仓", "快跑", "垃圾", "必涨", "退市", "暴雷", "血亏", "无脑"]
+        content = (text or "").lower()
+        return any(word in content for word in extreme_words)
+
+    def _classify_heat_level(self, sample_count: int) -> str:
+        if sample_count >= 60:
+            return "爆发"
+        if sample_count >= 25:
+            return "升温"
+        if sample_count >= 10:
+            return "平稳"
+        return "低热度"
 
     def _get_company_chinese_name(self, ticker: str) -> Optional[str]:
         """获取公司中文名称"""
@@ -539,6 +600,12 @@ def get_chinese_social_sentiment(ticker: str, curr_date: str) -> str:
 
         sample_titles = news.get("sample_titles", [])
         sample_titles_text = "\n".join(f"- {title}" for title in sample_titles) if sample_titles else "- 暂无样本标题"
+        forum_titles = forum.get("sample_titles", [])
+        forum_titles_text = "\n".join(f"- {title}" for title in forum_titles) if forum_titles else "- 暂无社媒标题样本"
+        platform_breakdown = forum.get("platform_breakdown", {})
+        platform_breakdown_text = (
+            "、".join(f"{k}:{v}" for k, v in platform_breakdown.items()) if platform_breakdown else "暂无"
+        )
 
         return f"""
 中国市场情绪分析报告 - {ticker}
@@ -558,7 +625,13 @@ def get_chinese_social_sentiment(ticker: str, curr_date: str) -> str:
 💬 论坛/社媒情绪:
 - 情绪评分: {forum.get('sentiment_score', 0):.2f}
 - 讨论样本数: {forum.get('discussion_count', 0)}条
+- 讨论热度: {forum.get('heat_level', '低热度')}
+- 平台分布: {platform_breakdown_text}
 - 热点主题: {', '.join(forum.get('hot_topics', [])) or '暂无'}
+- 极端用语占比: {forum.get('extreme_ratio', 0.0):.1%}
+
+📌 论坛/社媒标题示例:
+{forum_titles_text}
 
 📰 媒体覆盖度:
 - 覆盖样本数: {media.get('coverage_count', 0)}条
@@ -576,7 +649,7 @@ def get_chinese_social_sentiment(ticker: str, curr_date: str) -> str:
 
 ⚠️ 数据说明:
 本分析优先使用项目内缓存、AKShare/Tushare/BaoStock 可访问新闻源及公开财经新闻。
-当论坛/社媒缓存缺失时，不会再伪造样本，而是降低该维度权重。
+当论坛/社媒缓存缺失时，会尝试抓取东方财富股吧与雪球公开页面；若外站风控拦截，再降低该维度权重。
 
 生成时间: {sentiment_data.get('timestamp', datetime.now().isoformat())}
 """
