@@ -7,6 +7,7 @@ MongoDB 缓存适配器
 import pandas as pd
 from typing import Optional, Dict, Any, List, Union
 from datetime import datetime, timedelta, timezone
+import os
 
 # 导入日志模块
 from tradingagents.utils.logging_manager import get_logger
@@ -114,7 +115,10 @@ class MongoDBCacheAdapter:
                     logger.info(f"📊 [数据源优先级] 从数据库读取到 {len(configs)} 个数据源配置")
 
                     # 3. 过滤启用的数据源
+                    env_tushare_override = self._get_env_tushare_override()
                     enabled = []
+                    has_enabled_tushare = False
+                    tushare_added_by_env_override = False
                     for ds in configs:
                         ds_type = ds.get('type', '')
                         ds_enabled = ds.get('enabled', True)
@@ -124,8 +128,13 @@ class MongoDBCacheAdapter:
                         logger.info(f"📊 [数据源配置] 类型: {ds_type}, 启用: {ds_enabled}, 优先级: {ds_priority}, 市场: {ds_categories}")
 
                         if not ds_enabled:
-                            logger.info(f"⚠️ [数据源优先级] {ds_type} 未启用，跳过")
-                            continue
+                            if ds_type.lower() == 'tushare' and env_tushare_override:
+                                ds_enabled = True
+                                tushare_added_by_env_override = True
+                                logger.info("ℹ️ [数据源优先级] 检测到第三方 Tushare endpoint，按 .env 覆盖启用")
+                            else:
+                                logger.info(f"⚠️ [数据源优先级] {ds_type} 未启用，跳过")
+                                continue
 
                         # 检查市场分类
                         if ds_categories and market_category:
@@ -133,7 +142,23 @@ class MongoDBCacheAdapter:
                                 logger.info(f"⚠️ [数据源优先级] {ds_type} 不支持市场 {market_category}，跳过")
                                 continue
 
+                        if ds_type.lower() == 'tushare' and ds_enabled:
+                            has_enabled_tushare = True
                         enabled.append(ds)
+
+                    if (
+                        env_tushare_override
+                        and not has_enabled_tushare
+                        and not tushare_added_by_env_override
+                        and market_category in (None, 'a_shares')
+                    ):
+                        enabled.append({
+                            'type': 'tushare',
+                            'priority': 0,
+                            'enabled': True,
+                            'market_categories': ['a_shares']
+                        })
+                        logger.info("ℹ️ [数据源优先级] 数据库缺少可用 tushare 条目，按 .env 覆盖补充")
 
                     logger.info(f"📊 [数据源优先级] 过滤后启用的数据源: {len(enabled)} 个")
 
@@ -156,6 +181,19 @@ class MongoDBCacheAdapter:
         # 默认顺序：Tushare > AKShare > BaoStock
         logger.info(f"📊 [数据源优先级] 使用默认顺序: ['tushare', 'akshare', 'baostock']")
         return ['tushare', 'akshare', 'baostock']
+
+    @staticmethod
+    def _get_env_tushare_override() -> Optional[Dict[str, str]]:
+        """检测 .env 中是否启用了第三方 Tushare endpoint。"""
+        endpoint = (os.getenv('TUSHARE_ENDPOINT') or '').strip()
+        token = (os.getenv('TUSHARE_TOKEN') or '').strip()
+        # 官方 endpoint 不启用覆盖；第三方 endpoint 才启用
+        if not endpoint or endpoint == "http://api.tushare.pro":
+            return None
+        if not token or token.startswith("your_"):
+            logger.warning("⚠️ 检测到自定义 TUSHARE_ENDPOINT，但 TUSHARE_TOKEN 无效，跳过覆盖")
+            return None
+        return {"endpoint": endpoint, "token": token}
 
     def get_historical_data(self, symbol: str, start_date: str = None, end_date: str = None,
                           period: str = "daily") -> Optional[pd.DataFrame]:
@@ -181,7 +219,16 @@ class MongoDBCacheAdapter:
             # 获取数据源优先级
             priority_order = self._get_data_source_priority(symbol)
 
-            # 按优先级查询
+            # 目标结束日期（用于新鲜度判断）
+            target_end = None
+            if end_date:
+                target_end = str(end_date).replace('-', '')
+
+            best_df = None
+            best_source = None
+            best_latest_td = None
+
+            # 按优先级查询（优先级优先，但会跳过明显过旧的数据）
             for data_source in priority_order:
                 # 构建查询条件
                 query = {
@@ -205,10 +252,39 @@ class MongoDBCacheAdapter:
 
                 if data:
                     df = pd.DataFrame(data)
+                    latest_td = None
+                    if 'trade_date' in df.columns:
+                        try:
+                            latest_td = str(df['trade_date'].astype(str).max()).replace('-', '')
+                        except Exception:
+                            latest_td = None
+
+                    if (
+                        best_df is None
+                        or (latest_td is not None and (best_latest_td is None or latest_td > best_latest_td))
+                    ):
+                        best_df = df
+                        best_source = data_source
+                        best_latest_td = latest_td
+
+                    # 日线场景下，若命中数据未达到目标结束日，继续尝试低优先级以获取更新数据
+                    if period == "daily" and target_end and latest_td and latest_td < target_end:
+                        logger.warning(
+                            f"⚠️ [MongoDB-{data_source}] 数据未覆盖目标结束日: latest={latest_td}, target={target_end}，继续尝试其他数据源"
+                        )
+                        continue
+
                     logger.info(f"✅ [数据来源: MongoDB-{data_source}] {symbol}, {len(df)}条记录 (period={period})")
                     return df
                 else:
                     logger.debug(f"⚠️ [MongoDB-{data_source}] 未找到{period}数据: {symbol}")
+
+            # 没有来源覆盖到目标结束日时，返回最佳候选（避免直接无数据）
+            if best_df is not None:
+                logger.warning(
+                    f"⚠️ [数据来源: MongoDB] 未找到覆盖目标结束日的数据，回退到最佳候选 source={best_source}, latest_trade_date={best_latest_td}"
+                )
+                return best_df
 
             # 所有数据源都没有数据
             logger.warning(f"⚠️ [数据来源: MongoDB] 所有数据源({', '.join(priority_order)})都没有{period}数据: {symbol}，降级到其他数据源")

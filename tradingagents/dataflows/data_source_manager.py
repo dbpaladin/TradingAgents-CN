@@ -751,6 +751,24 @@ class DataSourceManager:
         except Exception:
             return 0
 
+    @staticmethod
+    def _normalize_date_to_yyyymmdd(value: Any) -> Optional[str]:
+        """将日期值标准化为 YYYYMMDD 字符串。"""
+        if value is None:
+            return None
+        try:
+            s = str(value).strip()
+            if not s:
+                return None
+            if len(s) == 8 and s.isdigit():
+                return s
+            dt = pd.to_datetime(s, errors='coerce')
+            if pd.isna(dt):
+                return None
+            return dt.strftime('%Y%m%d')
+        except Exception:
+            return None
+
     def _format_stock_data_response(self, data: pd.DataFrame, symbol: str, stock_name: str,
                                     start_date: str, end_date: str) -> str:
         """
@@ -845,11 +863,66 @@ class DataSourceManager:
 
             logger.info(f"🔍 [技术指标详情] ===== 数据详情结束 =====")
 
-            # 计算最新价格和涨跌幅
+            # 计算最新价格和涨跌幅（默认基于历史K线最后一条）
             latest_price = latest_data.get('close', 0)
             prev_close = data.iloc[-2].get('close', latest_price) if len(data) > 1 else latest_price
             change = latest_price - prev_close
             change_pct = (change / prev_close * 100) if prev_close != 0 else 0
+            price_source_note = ""
+
+            # 若 market_quotes 快照更新更近（或更贴近目标结束日），优先使用快照价格
+            try:
+                from .cache.app_adapter import get_market_quote_dataframe
+                quote_df = get_market_quote_dataframe(symbol)
+                if quote_df is not None and not quote_df.empty:
+                    q = quote_df.iloc[-1]
+                    q_close = q.get('close')
+                    if q_close is not None:
+                        q_price = float(q_close)
+                        q_pre_close = q.get('pre_close')
+                        q_pct = q.get('pct_chg')
+                        q_trade_date = self._normalize_date_to_yyyymmdd(q.get('date'))
+                        q_updated_date = self._normalize_date_to_yyyymmdd(q.get('updated_at'))
+
+                        hist_trade_date = self._normalize_date_to_yyyymmdd(
+                            latest_data.get('date') if latest_data.get('date') is not None else latest_data.get('trade_date')
+                        )
+                        target_end_date = self._normalize_date_to_yyyymmdd(end_date)
+
+                        should_use_quote = False
+                        if hist_trade_date and q_trade_date and q_trade_date > hist_trade_date:
+                            should_use_quote = True
+                        elif hist_trade_date and target_end_date and hist_trade_date < target_end_date:
+                            # 历史数据未覆盖到目标日时，允许使用当日更新的快照兜底
+                            if q_updated_date and q_updated_date >= target_end_date:
+                                should_use_quote = True
+                        elif latest_price in (None, 0):
+                            should_use_quote = True
+
+                        if should_use_quote:
+                            latest_price = q_price
+                            if q_pre_close is not None:
+                                try:
+                                    q_prev = float(q_pre_close)
+                                    if q_prev > 0:
+                                        change = latest_price - q_prev
+                                        change_pct = (change / q_prev) * 100
+                                except Exception:
+                                    pass
+                            elif q_pct is not None:
+                                try:
+                                    change_pct = float(q_pct)
+                                    # 无 pre_close 时沿用历史 prev_close 粗略估算涨跌额
+                                    change = latest_price - float(prev_close)
+                                except Exception:
+                                    pass
+
+                            price_source_note = (
+                                f"ℹ️ 价格来源: market_quotes快照"
+                                f" (trade_date={q_trade_date or 'N/A'}, updated={q.get('updated_at')})\n"
+                            )
+            except Exception as quote_err:
+                logger.debug(f"⚠️ market_quotes 快照价格补齐失败（忽略）: {quote_err}")
 
             # 格式化数据报告
             result = f"📊 {stock_name}({symbol}) - 技术分析数据\n"
@@ -858,6 +931,8 @@ class DataSourceManager:
 
             result += f"💰 最新价格: ¥{latest_price:.2f}\n"
             result += f"📈 涨跌额: {change:+.2f} ({change_pct:+.2f}%)\n\n"
+            if price_source_note:
+                result += price_source_note + "\n"
 
             # 添加技术指标
             result += f"📊 移动平均线 (MA):\n"

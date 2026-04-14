@@ -103,9 +103,12 @@ def get_market_quote_dataframe(symbol: str) -> Optional[pd.DataFrame]:
             "high": doc.get("high"),
             "low": doc.get("low"),
             "close": doc.get("close"),
+            "pre_close": doc.get("pre_close"),
             "volume": doc.get("volume"),
             "amount": doc.get("amount"),
             "pct_chg": doc.get("pct_chg"),
+            "updated_at": doc.get("updated_at"),
+            "data_source": doc.get("data_source") or doc.get("source"),
             "change": None,
         }
         df = pd.DataFrame([row])
@@ -116,4 +119,3 @@ def get_market_quote_dataframe(symbol: str) -> Optional[pd.DataFrame]:
         except Exception:
             pass
         return None
-
