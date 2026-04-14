@@ -48,6 +48,43 @@ class FakeFundFlowAnalyzer(AShareFundFlowAnalyzer):
         }
 
 
+class LowSampleAK(FakeAK):
+    def stock_lhb_stock_statistic_em(self, symbol: str):
+        return pd.DataFrame(
+            [
+                {
+                    "代码": "000001",
+                    "上榜次数": 1,
+                    "龙虎榜净买额": -32400000,
+                    "买方机构次数": 0,
+                    "卖方机构次数": 1,
+                    "最近上榜日": "2026-03-20",
+                }
+            ]
+        )
+
+
+class DateAlignedFundFlowAnalyzer(FakeFundFlowAnalyzer):
+    def _collect_tushare_context(self, date: str):
+        return {
+            "moneyflow": pd.DataFrame(
+                [
+                    {"ts_code": "000001.SZ", "trade_date": date, "net_mf_amount": 18800000},
+                ]
+            ),
+            "margin_detail": pd.DataFrame(
+                [
+                    {"ts_code": "000001.SZ", "trade_date": date, "融资买入额": 5200000, "融券卖出量": 0},
+                ]
+            ),
+            "hk_hold": pd.DataFrame(
+                [
+                    {"ts_code": "000001.SZ", "trade_date": date, "持股数变化": 120000},
+                ]
+            ),
+        }
+
+
 def test_fund_flow_summary_detects_positive_capital_signals():
     analyzer = FakeFundFlowAnalyzer(FakeAK())
     data = analyzer.collect("2026-03-21")
@@ -90,3 +127,28 @@ def test_fund_flow_summary_marks_missing_data_as_gap_not_bearish():
     assert "只应降低置信度" in summary.data_quality_note
     assert summary.northbound_signal.startswith("北向数据未命中")
     assert summary.margin_signal == "融资融券数据缺失或当日未更新"
+
+
+def test_fund_flow_summary_marks_low_sample_lhb_as_weak_evidence():
+    analyzer = DateAlignedFundFlowAnalyzer(LowSampleAK())
+    data = analyzer.collect("2026-03-21")
+
+    summary = analyzer.build_summary("000001.SZ", "2026-03-21", data)
+
+    assert summary.lhb_count == 1
+    assert "龙虎榜近一月仅上榜 1 次，样本偏低，只能作为弱证据" in summary.weak_evidence
+    assert "龙虎榜样本偏低" in summary.audit_flags
+    assert "弱证据项" in summary.data_quality_note
+    assert summary.source_status["lhb"]["date_aligned"] is False
+
+
+def test_fund_flow_report_contains_data_source_audit_section():
+    analyzer = DateAlignedFundFlowAnalyzer(FakeAK())
+    data = analyzer.collect("2026-03-21")
+    summary = analyzer.build_summary("000001.SZ", "2026-03-21", data)
+
+    report = analyzer.render_markdown(summary)
+
+    assert "数据源体检" in report
+    assert "moneyflow: 来源 **tushare** / 命中 **是** / 日期对齐 **是**" in report
+    assert "当前弱证据项" in report

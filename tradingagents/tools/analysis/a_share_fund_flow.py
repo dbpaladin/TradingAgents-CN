@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 import json
 
@@ -12,6 +13,7 @@ import pandas as pd
 
 _FUND_FLOW_REPORT_CACHE: Dict[tuple[str, str], tuple[float, str]] = {}
 _FUND_FLOW_CACHE_TTL_SECONDS = 600
+_FUND_FLOW_REPORT_CACHE_VERSION = "v2"
 
 
 def _normalize_symbol(ticker: str) -> str:
@@ -28,7 +30,7 @@ def _normalize_symbol(ticker: str) -> str:
 
 
 def _cache_key(ticker: str, trade_date: str) -> tuple[str, str]:
-    return _normalize_symbol(ticker), trade_date
+    return _normalize_symbol(ticker), f"{trade_date}:{_FUND_FLOW_REPORT_CACHE_VERSION}"
 
 
 def get_cached_a_share_fund_flow_report(
@@ -95,6 +97,7 @@ def _find_first_numeric(row: pd.Series, candidates: List[str]) -> float:
 @dataclass(frozen=True)
 class AShareFundFlowSummary:
     trade_date: str
+    effective_trade_date: str
     ticker: str
     stock_status: str
     capital_style: str
@@ -110,7 +113,10 @@ class AShareFundFlowSummary:
     evidence_completeness_label: str
     data_quality_note: str
     evidence: List[str]
+    weak_evidence: List[str]
+    audit_flags: List[str]
     missing_evidence: List[str]
+    source_status: Dict[str, Any]
     target_metrics: Dict[str, Any]
 
 
@@ -119,6 +125,8 @@ class AShareFundFlowAnalyzer:
 
     def __init__(self, ak_module: Any):
         self.ak = ak_module
+        self.requested_trade_date = ""
+        self.effective_trade_date = ""
 
     def _safe_fetch(self, func_name: str, **kwargs) -> pd.DataFrame:
         func = getattr(self.ak, func_name, None)
@@ -133,6 +141,8 @@ class AShareFundFlowAnalyzer:
         return pd.DataFrame()
 
     def collect(self, trade_date: str) -> Dict[str, pd.DataFrame]:
+        self.requested_trade_date = trade_date
+        self.effective_trade_date = trade_date
         date = trade_date.replace("-", "")
         data = {
             "zt": self._safe_fetch("stock_zt_pool_em", date=date),
@@ -156,7 +166,7 @@ class AShareFundFlowAnalyzer:
                 api._DataApi__token = token
                 if endpoint:
                     api._DataApi__http_url = endpoint
-                return self._query_tushare_context(api, date)
+                return self._query_tushare_context_with_fallback(api, date)
             except Exception:
                 pass
 
@@ -165,9 +175,24 @@ class AShareFundFlowAnalyzer:
 
             provider = get_tushare_provider()
             if getattr(provider, "api", None):
-                return self._query_tushare_context(provider.api, date)
+                return self._query_tushare_context_with_fallback(provider.api, date)
         except Exception:
             pass
+
+        return {}
+
+    def _query_tushare_context_with_fallback(self, api: Any, date: str) -> Dict[str, pd.DataFrame]:
+        try:
+            base_date = datetime.strptime(date, "%Y%m%d")
+        except ValueError:
+            return self._query_tushare_context(api, date)
+
+        for offset in range(0, 8):
+            probe_date = (base_date - timedelta(days=offset)).strftime("%Y%m%d")
+            result = self._query_tushare_context(api, probe_date)
+            if any(isinstance(df, pd.DataFrame) and not df.empty for df in result.values()):
+                self.effective_trade_date = f"{probe_date[:4]}-{probe_date[4:6]}-{probe_date[6:8]}"
+                return result
 
         return {}
 
@@ -268,6 +293,61 @@ class AShareFundFlowAnalyzer:
             return pd.Series(dtype=object)
         return matched.iloc[0]
 
+    def _extract_trade_date_value(self, row: pd.Series, candidates: List[str]) -> str:
+        if row.empty:
+            return ""
+        for candidate in candidates:
+            value = row.get(candidate)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text and text.lower() != "nan":
+                return text
+        return ""
+
+    def _normalize_trade_date_value(self, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        return text.replace("-", "").replace("/", "")[:8]
+
+    def _build_source_status(
+        self,
+        source: str,
+        dataset: str,
+        row: pd.Series,
+        date_candidates: List[str],
+        expected_trade_date: str,
+        weak_reason: str = "",
+    ) -> Dict[str, Any]:
+        observed_trade_date = self._extract_trade_date_value(row, date_candidates)
+        normalized_expected = self._normalize_trade_date_value(expected_trade_date)
+        normalized_observed = self._normalize_trade_date_value(observed_trade_date)
+
+        if row.empty:
+            return {
+                "source": source,
+                "dataset": dataset,
+                "has_record": False,
+                "observed_trade_date": "",
+                "date_aligned": None,
+                "weak_reason": "",
+            }
+
+        if observed_trade_date:
+            date_aligned = normalized_observed == normalized_expected
+        else:
+            date_aligned = None
+
+        return {
+            "source": source,
+            "dataset": dataset,
+            "has_record": True,
+            "observed_trade_date": observed_trade_date,
+            "date_aligned": date_aligned,
+            "weak_reason": weak_reason,
+        }
+
     def build_summary(self, ticker: str, trade_date: str, data: Dict[str, pd.DataFrame]) -> AShareFundFlowSummary:
         stock_status = self._detect_stock_status(ticker, data)
         lhb_row = self._extract_lhb_row(ticker, data)
@@ -275,6 +355,7 @@ class AShareFundFlowAnalyzer:
         margin_row = self._extract_margin_row(ticker, data)
         hk_hold_row = self._extract_hk_hold_row(ticker, data)
         symbol = _normalize_symbol(ticker)
+        effective_trade_date = self.effective_trade_date or trade_date
 
         lhb_count = _to_int(lhb_row.get("上榜次数"), 0) if not lhb_row.empty else 0
         lhb_net_amount = _to_float(lhb_row.get("龙虎榜净买额"), 0.0) if not lhb_row.empty else 0.0
@@ -338,9 +419,15 @@ class AShareFundFlowAnalyzer:
         )
 
         evidence: List[str] = []
+        weak_evidence: List[str] = []
+        audit_flags: List[str] = []
         missing_evidence: List[str] = []
+        lhb_low_sample_note = "龙虎榜近一月仅上榜 1 次，样本偏低，只能作为弱证据"
         if lhb_count > 0:
             evidence.append(f"近一月龙虎榜上榜 {lhb_count} 次")
+            if lhb_count <= 1:
+                weak_evidence.append(lhb_low_sample_note)
+                audit_flags.append("龙虎榜样本偏低")
         else:
             missing_evidence.append("龙虎榜上榜记录")
         if abs(lhb_net_amount) > 0:
@@ -366,6 +453,53 @@ class AShareFundFlowAnalyzer:
             evidence.append(f"个股位于{stock_status}")
         if not evidence:
             evidence.append("当前可直接提取的资金面明细有限，需结合后续交易日继续跟踪")
+
+        source_status = {
+            "lhb": self._build_source_status(
+                source="akshare",
+                dataset="stock_lhb_stock_statistic_em",
+                row=lhb_row,
+                date_candidates=["最近上榜日", "上榜日", "trade_date", "日期"],
+                expected_trade_date=trade_date,
+                weak_reason=lhb_low_sample_note if lhb_count <= 1 and not lhb_row.empty else "",
+            ),
+            "moneyflow": self._build_source_status(
+                source="tushare",
+                dataset="moneyflow",
+                row=moneyflow_row,
+                date_candidates=["trade_date", "日期"],
+                expected_trade_date=effective_trade_date,
+            ),
+            "margin_detail": self._build_source_status(
+                source="tushare",
+                dataset="margin_detail",
+                row=margin_row,
+                date_candidates=["trade_date", "日期"],
+                expected_trade_date=effective_trade_date,
+            ),
+            "hk_hold": self._build_source_status(
+                source="tushare",
+                dataset="hk_hold",
+                row=hk_hold_row,
+                date_candidates=["trade_date", "日期"],
+                expected_trade_date=effective_trade_date,
+            ),
+        }
+
+        for key, status in source_status.items():
+            if not status["has_record"]:
+                continue
+            if status["date_aligned"] is False:
+                label_map = {
+                    "moneyflow": "主力资金明细日期未与分析日对齐",
+                    "margin_detail": "融资融券明细日期未与分析日对齐",
+                    "hk_hold": "北向持股明细日期未与分析日对齐",
+                    "lhb": "龙虎榜最近记录日期未与分析日对齐",
+                }
+                weak_evidence.append(label_map.get(key, f"{key} 日期未对齐"))
+                audit_flags.append(label_map.get(key, f"{key} 日期未对齐"))
+            if status["weak_reason"]:
+                weak_evidence.append(status["weak_reason"])
 
         if institutional_buy_times > institutional_sell_times and institutional_buy_times > 0:
             institutional_signal = "机构席位偏多"
@@ -456,8 +590,17 @@ class AShareFundFlowAnalyzer:
         else:
             data_quality_note = "关键资金证据较完整，可将资金面结论作为较高权重参考。"
 
+        deduped_weak_evidence = list(dict.fromkeys(weak_evidence))
+        deduped_audit_flags = list(dict.fromkeys(audit_flags))
+
+        if deduped_weak_evidence:
+            data_quality_note += " 另外，当前仍存在弱证据项：" + "、".join(deduped_weak_evidence) + "。这类信号可参考，但不宜单独推导中长期结论。"
+        if effective_trade_date != trade_date:
+            data_quality_note += f" 本次分析请求日期为 {trade_date}，但资金面明细已自动回退到最近可用交易日 {effective_trade_date}。"
+
         return AShareFundFlowSummary(
             trade_date=trade_date,
+            effective_trade_date=effective_trade_date,
             ticker=ticker,
             stock_status=stock_status,
             capital_style=capital_style,
@@ -473,7 +616,10 @@ class AShareFundFlowAnalyzer:
             evidence_completeness_label=evidence_completeness_label,
             data_quality_note=data_quality_note,
             evidence=evidence,
+            weak_evidence=deduped_weak_evidence,
+            audit_flags=deduped_audit_flags,
             missing_evidence=missing_evidence,
+            source_status=source_status,
             target_metrics=target_metrics,
         )
 
@@ -482,6 +628,7 @@ class AShareFundFlowAnalyzer:
             "## A股资金面分析",
             "",
             f"**分析日期**: {summary.trade_date}",
+            f"**资金面有效交易日**: {summary.effective_trade_date}",
             f"**资金风格判断**: **{summary.capital_style}**",
             f"**行动偏向**: **{summary.action_bias}**",
             f"**风险标记**: **{summary.risk_flag}**",
@@ -508,6 +655,27 @@ class AShareFundFlowAnalyzer:
         lines.extend(
             [
                 "",
+                "### 数据源体检",
+            ]
+        )
+        for name, status in summary.source_status.items():
+            aligned = (
+                "是"
+                if status["date_aligned"] is True
+                else "否"
+                if status["date_aligned"] is False
+                else "未知"
+            )
+            observed_trade_date = status["observed_trade_date"] or "未提供"
+            lines.append(
+                f"- {name}: 来源 **{status['source']}** / 命中 **{'是' if status['has_record'] else '否'}** / 日期对齐 **{aligned}** / 数据日期 **{observed_trade_date}**"
+            )
+            if status["weak_reason"]:
+                lines.append(f"- {name} 弱证据说明: **{status['weak_reason']}**")
+
+        lines.extend(
+            [
+                "",
                 "### 数据缺口与解释边界",
                 f"- {summary.data_quality_note}",
             ]
@@ -516,6 +684,14 @@ class AShareFundFlowAnalyzer:
             lines.append(f"- 当前缺失项: **{' / '.join(summary.missing_evidence)}**")
         else:
             lines.append("- 当前缺失项: **无明显关键缺口**")
+        if summary.weak_evidence:
+            lines.append(f"- 当前弱证据项: **{' / '.join(summary.weak_evidence)}**")
+        else:
+            lines.append("- 当前弱证据项: **无明显弱证据项**")
+        if summary.audit_flags:
+            lines.append(f"- 体检提示: **{' / '.join(summary.audit_flags)}**")
+        else:
+            lines.append("- 体检提示: **未发现明显日期错位或低样本警报**")
 
         lines.extend(
             [
