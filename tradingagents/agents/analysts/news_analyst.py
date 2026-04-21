@@ -19,6 +19,36 @@ logger = get_logger("analysts.news")
 def create_news_analyst(llm, toolkit):
     @log_analyst_module("news")
     def news_analyst_node(state):
+        def _build_degraded_news_report(reason: str) -> str:
+            return (
+                f"## {ticker} 新闻分析降级报告\n\n"
+                f"- 分析对象：{company_name}（{ticker}）\n"
+                f"- 问题：{reason}\n"
+                f"- 处理建议：复查新闻工具返回、模型工具调用日志与 ToolMessage 汇总链路。\n"
+                f"- 结论：本次新闻维度结果无效，不应作为最终投资决策的强证据。\n"
+            )
+
+        def _is_invalid_news_report(report: str) -> bool:
+            if not report or not report.strip():
+                return True
+
+            normalized = report.strip()
+            invalid_prefixes = (
+                "我将立即调用工具获取",
+                "我会立即调用工具获取",
+                "我将调用工具获取",
+                "我会调用工具获取",
+                "接下来我将调用工具获取",
+                "先调用工具获取",
+            )
+            if any(normalized.startswith(prefix) for prefix in invalid_prefixes):
+                return True
+
+            if "调用工具获取" in normalized and len(normalized) <= 120:
+                return True
+
+            return False
+
         start_time = datetime.now()
 
         # 🔧 工具调用计数器 - 防止无限循环
@@ -94,6 +124,19 @@ def create_news_analyst(llm, toolkit):
         
         company_name = _get_company_name(ticker, market_info)
         logger.info(f"[新闻分析师] 公司名称: {company_name}")
+
+        if tool_call_count >= max_tool_calls:
+            logger.warning(f"[新闻分析师] ⚠️ 已达到最大工具调用次数 {tool_call_count}/{max_tool_calls}，直接返回降级报告")
+            from langchain_core.messages import AIMessage
+
+            report = _build_degraded_news_report(
+                "新闻分析流程达到最大工具调用次数，未能在限制内生成有效正文。"
+            )
+            return {
+                "messages": [AIMessage(content=report)],
+                "news_report": report,
+                "news_tool_call_count": tool_call_count,
+            }
         
         # 🔧 使用统一新闻工具，简化工具调用
         logger.info(f"[新闻分析师] 使用统一新闻工具，自动识别股票类型并获取相应新闻")
@@ -265,6 +308,12 @@ def create_news_analyst(llm, toolkit):
                         logger.info(f"[新闻分析师] ✅ 预处理模式成功，报告长度: {len(report)} 字符")
                         logger.info(f"[新闻分析师] 📄 报告预览 (前300字符): {report[:300]}")
 
+                        if _is_invalid_news_report(report):
+                            logger.warning("[新闻分析师] ⚠️ 预处理模式返回无效正文，使用降级报告替代")
+                            report = _build_degraded_news_report(
+                                "新闻分析流程未生成有效正文，可能是工具返回为空、模型未完成总结，或仅返回了工具调用前导语。"
+                            )
+
                         # 跳转到最终处理
                         from langchain_core.messages import AIMessage
                         clean_message = AIMessage(content=report)
@@ -393,14 +442,10 @@ def create_news_analyst(llm, toolkit):
                     "news_tool_call_count": tool_call_count + 1
                 }
 
-        if not report or not report.strip():
+        if _is_invalid_news_report(report):
             logger.warning(f"[新闻分析师] ⚠️ 最终报告为空，使用降级报告避免写入空文件")
-            report = (
-                f"## {ticker} 新闻分析降级报告\n\n"
-                f"- 分析对象：{company_name}（{ticker}）\n"
-                f"- 问题：新闻分析流程未生成有效正文，可能是工具返回为空、模型未完成总结，或消息在工具调用后被提前清空。\n"
-                f"- 处理建议：复查新闻工具返回、模型工具调用日志与 ToolMessage 汇总链路。\n"
-                f"- 结论：本次新闻维度结果无效，不应作为最终投资决策的强证据。\n"
+            report = _build_degraded_news_report(
+                "新闻分析流程未生成有效正文，可能是工具返回为空、模型未完成总结，或仅返回了工具调用前导语。"
             )
 
         total_time_taken = (datetime.now() - start_time).total_seconds()

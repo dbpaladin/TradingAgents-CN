@@ -116,3 +116,64 @@ python3 -m py_compile \
 ## 关联归档
 
 - `history_chat/2026-04-21_工业富联报告复核_生产链路修复与GitHub提交.md`
+
+## Follow-up（2026-04-21 晚间续修）
+
+后续复核同日工业富联报告时，又确认了两个遗留问题：
+
+1. `news_report.md` 仍可能是 0 字节文件
+2. `final_trade_decision.md` 与 `trader_investment_plan.md` 的评分口径不一致
+
+对应追加修复如下。
+
+### 1. 图状态层补齐 `news_report`
+
+文件：
+
+- `tradingagents/agents/utils/agent_utils.py`
+- `tradingagents/graph/setup.py`
+
+根因不只是在保存文件时“空字符串兜底”，还在于新闻分支清理消息时没有把降级后的 `news_report` 写回最终图状态。
+
+修复后：
+
+- `create_msg_delete()` 支持接收状态更新工厂函数。
+- 新闻分支在 `Msg Clear News` 之前，会先写入“新闻分析降级报告”到 `state["news_report"]`。
+- 后续风险节点和最终保存阶段读取到的将是明确占位报告，而不是空值。
+
+### 2. 服务层统一概率分数展示口径
+
+文件：
+
+- `app/services/simple_analysis_service.py`
+
+修复后：
+
+- `confidence` / `risk_score` 无论原始值是 `0.69`、`69` 还是 `69%`，都会统一归一到 0-1 内部表示。
+- 保存到 markdown 时统一格式化为百分比。
+- 模块正文中的“置信度 / 风险评分”文本也会被规范化，避免报告之间口径漂移。
+
+### 3. 服务层补齐缺失报告落盘
+
+文件：
+
+- `app/services/simple_analysis_service.py`
+
+即使最终结果对象里完全没有 `news_report` 键，也会强制落一个非空降级报告，避免再次出现空文件。
+
+### 4. 新增回归测试
+
+新增：
+
+- `tests/test_simple_analysis_service_report_fallbacks.py`
+- `tests/test_news_clear_state_fallback.py`
+
+验证内容：
+
+- 评分归一化与百分比格式化
+- 缺失 `news_report` 时强制生成非空降级报告
+- 新闻清理节点保留 `news_report` 状态更新
+
+### 5. 实跑状态
+
+已发起 `601138` 的真实重跑验证，但本轮被外部模型接口长时间重试阻塞，未能在当次会话内产出新的完整报告。该阻塞点已从“本地代码逻辑错误”转为“上游模型调用稳定性”问题。

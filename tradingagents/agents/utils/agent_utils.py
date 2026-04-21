@@ -24,13 +24,15 @@ from tradingagents.utils.logging_manager import get_logger
 logger = get_logger('agents')
 
 
-def create_msg_delete(parallel_safe: bool = False):
+def create_msg_delete(parallel_safe: bool = False, state_update_factory=None):
     def delete_messages(state):
         """Clear branch messages unless the caller explicitly opts into parallel-safe mode."""
+        extra_state = state_update_factory(state) if state_update_factory else {}
+
         if parallel_safe:
             # Parallel analyst branches share the same message reducer. Deleting the
             # same IDs from multiple branches can trigger LangGraph remove conflicts.
-            return {}
+            return extra_state
 
         messages = state["messages"]
 
@@ -39,7 +41,7 @@ def create_msg_delete(parallel_safe: bool = False):
         removal_operations = [RemoveMessage(id=m.id) for m in messages]
         placeholder = HumanMessage(content="Continue")
 
-        return {"messages": removal_operations + [placeholder]}
+        return {"messages": removal_operations + [placeholder], **extra_state}
     
     return delete_messages
 

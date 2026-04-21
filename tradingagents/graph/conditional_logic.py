@@ -242,8 +242,11 @@ class ConditionalLogic:
         logger.debug(f"🔀 [条件判断] - 报告长度: {len(news_report)}")
         logger.debug(f"🔧 [死循环修复] - 工具调用次数: {tool_call_count}/{max_tool_calls}")
 
-        # 死循环修复: 如果达到最大工具调用次数，强制结束
+        # 死循环修复: 如果达到最大工具调用次数，必须走已注册的清理分支。
+        # 这里不能直接返回 "News Analyst"，否则会触发 LangGraph 分支映射 KeyError。
         if tool_call_count >= max_tool_calls:
+            if not news_report or len(news_report) <= 100:
+                logger.warning("🔧 [死循环修复] 新闻工具调用达到上限但报告仍为空，强制结束并交由后续兜底逻辑处理")
             logger.warning(f"🔧 [死循环修复] 达到最大工具调用次数，强制结束: Msg Clear News")
             return "Msg Clear News"
 

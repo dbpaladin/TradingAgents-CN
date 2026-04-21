@@ -683,6 +683,81 @@ class SimpleAnalysisService:
             logger.warning(f"⚠️ 补齐股票名称时出现异常: {e}")
         return tasks
 
+    def _build_news_report_fallback(
+        self,
+        stock_symbol: str,
+        state: Optional[Dict[str, Any]] = None,
+        reason: Optional[str] = None,
+    ) -> str:
+        """生成新闻报告降级内容，避免最终产物出现空文件。"""
+        stock_name = stock_symbol
+        if isinstance(state, dict):
+            stock_name = state.get("company_of_interest") or stock_symbol
+
+        fallback_reason = reason or "工作流最终状态中缺少有效的 `news_report`，原始新闻报告未成功落盘。"
+        return (
+            f"## {stock_symbol} 新闻分析降级报告\n\n"
+            f"- 分析对象：{stock_name}（{stock_symbol}）\n"
+            f"- 问题：{fallback_reason}\n"
+            f"- 处理建议：复查新闻工具返回、模型工具调用次数限制与 ToolMessage 汇总链路。\n"
+            f"- 结论：本次新闻维度结果无效，不应作为最终投资决策的强证据。\n"
+        )
+
+    def _normalize_probability_score(self, raw_value: Any, default: float = 0.0) -> float:
+        """将 0-1 / 0-100 / 字符串 百分比分数统一归一为 0-1。"""
+        if raw_value is None:
+            return default
+
+        try:
+            if isinstance(raw_value, str):
+                text = raw_value.strip().replace("%", "")
+                if not text:
+                    return default
+                value = float(text)
+                if "%" in raw_value:
+                    value /= 100.0
+            else:
+                value = float(raw_value)
+        except (TypeError, ValueError):
+            return default
+
+        if value < 0:
+            return default
+        if value > 1:
+            value /= 100.0
+        return max(0.0, min(value, 1.0))
+
+    def _format_probability_percent(self, raw_value: Any, default: float = 0.0) -> str:
+        """将概率分数格式化为百分比文本。"""
+        normalized = self._normalize_probability_score(raw_value, default=default)
+        return f"{normalized:.1%}"
+
+    def _normalize_report_score_text(self, text: Any) -> Any:
+        """统一正文里的置信度/风险评分展示口径，避免同时出现 0-1 与百分比。"""
+        if not isinstance(text, str) or not text.strip():
+            return text
+
+        patterns = [
+            (
+                r"(\*{0,2}置信度\*{0,2}\s*[：:]\s*\*{0,2})(\d+(?:\.\d+)?%?)(\*{0,2})",
+                0.0,
+            ),
+            (
+                r"(\*{0,2}风险评分\*{0,2}\s*[：:]\s*\*{0,2})(\d+(?:\.\d+)?%?)(\*{0,2})",
+                0.0,
+            ),
+        ]
+
+        normalized_text = text
+        for pattern, default in patterns:
+            normalized_text = re.sub(
+                pattern,
+                lambda match: f"{match.group(1)}{self._format_probability_percent(match.group(2), default=default)}{match.group(3)}",
+                normalized_text,
+            )
+
+        return normalized_text
+
     def _normalize_action(self, raw_action: Optional[str]) -> Optional[str]:
         """将动作文本归一化为：买入 / 卖出 / 持有"""
         if not raw_action:
@@ -1329,6 +1404,8 @@ class SimpleAnalysisService:
             deep_provider = deep_provider_info["provider"]
             quick_backend_url = quick_provider_info["backend_url"]
             deep_backend_url = deep_provider_info["backend_url"]
+            quick_model_config = quick_provider_info.get("model_config")
+            deep_model_config = deep_provider_info.get("model_config")
 
             logger.info(f"🔍 [供应商查找] 快速模型 {quick_model} 对应的供应商: {quick_provider}")
             logger.info(f"🔍 [API地址] 快速模型使用 backend_url: {quick_backend_url}")
@@ -1352,7 +1429,9 @@ class SimpleAnalysisService:
                 quick_model=quick_model,
                 deep_model=deep_model,
                 llm_provider=quick_provider,  # 主要使用快速模型的供应商
-                market_type=market_type  # 使用前端传递的市场类型
+                market_type=market_type,  # 使用前端传递的市场类型
+                quick_model_config=quick_model_config,
+                deep_model_config=deep_model_config,
             )
 
             # 🔧 添加混合模式配置
@@ -1818,8 +1897,9 @@ class SimpleAnalysisService:
 
                     formatted_decision = {
                         'action': chinese_action,
-                        'confidence': decision.get('confidence', 0.5),
-                        'risk_score': decision.get('risk_score', 0.3),
+                        'execution_advice': decision.get('execution_advice', ''),
+                        'confidence': self._normalize_probability_score(decision.get('confidence', 0.5), default=0.5),
+                        'risk_score': self._normalize_probability_score(decision.get('risk_score', 0.3), default=0.3),
                         'target_price': target_price,
                         'reasoning': decision.get('reasoning', '暂无分析推理'),
                         'current_price': decision.get('current_price'),
@@ -1831,6 +1911,7 @@ class SimpleAnalysisService:
                     # 处理其他类型
                     formatted_decision = {
                         'action': '持有',
+                        'execution_advice': '',
                         'confidence': 0.5,
                         'risk_score': 0.3,
                         'target_price': None,
@@ -1843,6 +1924,7 @@ class SimpleAnalysisService:
                 logger.error(f"❌ 格式化decision失败: {e}")
                 formatted_decision = {
                     'action': '持有',
+                    'execution_advice': '',
                     'confidence': 0.5,
                     'risk_score': 0.3,
                     'target_price': None,
@@ -1880,12 +1962,15 @@ class SimpleAnalysisService:
             # 3. 生成recommendation（从decision的reasoning）
             if isinstance(formatted_decision, dict):
                 action = formatted_decision.get('action', '持有')
+                execution_advice = formatted_decision.get('execution_advice', '')
                 target_price = formatted_decision.get('target_price')
                 reasoning = formatted_decision.get('reasoning', '')
                 consistency_note = formatted_decision.get('consistency_note', '')
 
                 # 生成投资建议
-                recommendation = f"投资建议：{action}。"
+                recommendation = f"方向判断：{action}。"
+                if execution_advice:
+                    recommendation += f"执行建议：{execution_advice}。"
                 if target_price:
                     recommendation += f"目标价格：{target_price}元。"
                 if reasoning:
@@ -2996,6 +3081,16 @@ class SimpleAnalysisService:
                         else:
                             report_content = str(module_content)
 
+                        if module_key == 'news_report' and not report_content.strip():
+                            report_content = self._build_news_report_fallback(
+                                stock_symbol=stock_symbol,
+                                state=state,
+                                reason="工作流最终状态中的 `news_report` 为空，原始新闻报告未成功落盘。",
+                            )
+                            logger.warning("⚠️ news_report 为空，已写入降级报告避免空文件")
+
+                        report_content = self._normalize_report_score_text(report_content)
+
                         # 保存到文件 - 使用web目录的文件名
                         file_path = reports_dir / module_info['filename']
                         with open(file_path, 'w', encoding='utf-8') as f:
@@ -3007,6 +3102,17 @@ class SimpleAnalysisService:
                 except Exception as e:
                     logger.warning(f"⚠️ 保存模块 {module_key} 失败: {e}")
 
+            if 'news_report' not in saved_files:
+                news_fallback_path = reports_dir / "news_report.md"
+                news_fallback = self._build_news_report_fallback(
+                    stock_symbol=stock_symbol,
+                    state=state,
+                )
+                with open(news_fallback_path, 'w', encoding='utf-8') as f:
+                    f.write(news_fallback)
+                saved_files['news_report'] = str(news_fallback_path)
+                logger.warning("⚠️ news_report 缺失，已强制写入降级报告避免空文件")
+
             # 保存最终决策报告 - 完全按照web目录的方式
             decision = result.get('decision', {})
             if decision:
@@ -3014,9 +3120,11 @@ class SimpleAnalysisService:
 
                 if isinstance(decision, dict):
                     decision_content += f"## 投资建议\n\n"
-                    decision_content += f"**行动**: {decision.get('action', 'N/A')}\n\n"
-                    decision_content += f"**置信度**: {decision.get('confidence', 0):.1%}\n\n"
-                    decision_content += f"**风险评分**: {decision.get('risk_score', 0):.1%}\n\n"
+                    decision_content += f"**方向判断**: {decision.get('action', 'N/A')}\n\n"
+                    if decision.get('execution_advice'):
+                        decision_content += f"**执行建议**: {decision.get('execution_advice')}\n\n"
+                    decision_content += f"**置信度**: {self._format_probability_percent(decision.get('confidence', 0))}\n\n"
+                    decision_content += f"**风险评分**: {self._format_probability_percent(decision.get('risk_score', 0))}\n\n"
                     decision_content += f"**目标价位**: {decision.get('target_price', 'N/A')}\n\n"
                     if decision.get('current_price') is not None:
                         decision_content += f"**当前价格**: {decision.get('current_price')}\n\n"
