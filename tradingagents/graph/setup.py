@@ -135,10 +135,27 @@ class GraphSetup:
             tool_nodes["institutional_theme"] = self.tool_nodes["institutional_theme"]
 
         if "news" in selected_analysts:
+            def _build_news_clear_state(state):
+                news_report = state.get("news_report", "")
+                if isinstance(news_report, str) and news_report.strip():
+                    return {}
+
+                ticker = state.get("company_of_interest", "未知股票")
+                company_name = ticker
+                reason = "新闻分析流程达到工具调用上限或未生成有效正文，已自动降级为占位报告。"
+                degraded_report = (
+                    f"## {ticker} 新闻分析降级报告\n\n"
+                    f"- 分析对象：{company_name}（{ticker}）\n"
+                    f"- 问题：{reason}\n"
+                    f"- 处理建议：复查新闻工具返回、模型工具调用日志与 ToolMessage 汇总链路。\n"
+                    f"- 结论：本次新闻维度结果无效，不应作为最终投资决策的强证据。\n"
+                )
+                return {"news_report": degraded_report}
+
             analyst_nodes["news"] = create_news_analyst(
                 self.quick_thinking_llm, self.toolkit
             )
-            delete_nodes["news"] = create_msg_delete()
+            delete_nodes["news"] = create_msg_delete(state_update_factory=_build_news_clear_state)
             tool_nodes["news"] = self.tool_nodes["news"]
 
         if "fundamentals" in selected_analysts:
