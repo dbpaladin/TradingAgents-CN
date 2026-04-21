@@ -1821,7 +1821,9 @@ class SimpleAnalysisService:
                         'confidence': decision.get('confidence', 0.5),
                         'risk_score': decision.get('risk_score', 0.3),
                         'target_price': target_price,
-                        'reasoning': decision.get('reasoning', '暂无分析推理')
+                        'reasoning': decision.get('reasoning', '暂无分析推理'),
+                        'current_price': decision.get('current_price'),
+                        'consistency_note': decision.get('consistency_note', '')
                     }
 
                     logger.info(f"🎯 [DEBUG] 格式化后的decision: {formatted_decision}")
@@ -1832,7 +1834,9 @@ class SimpleAnalysisService:
                         'confidence': 0.5,
                         'risk_score': 0.3,
                         'target_price': None,
-                        'reasoning': '暂无分析推理'
+                        'reasoning': '暂无分析推理',
+                        'current_price': None,
+                        'consistency_note': ''
                     }
                     logger.warning(f"⚠️ Decision不是字典类型: {type(decision)}")
             except Exception as e:
@@ -1842,7 +1846,9 @@ class SimpleAnalysisService:
                     'confidence': 0.5,
                     'risk_score': 0.3,
                     'target_price': None,
-                    'reasoning': '暂无分析推理'
+                    'reasoning': '暂无分析推理',
+                    'current_price': None,
+                    'consistency_note': ''
                 }
 
             # 🔧 对齐报告结论与结构化决策，避免“最终决策”和“投资计划”冲突
@@ -1876,6 +1882,7 @@ class SimpleAnalysisService:
                 action = formatted_decision.get('action', '持有')
                 target_price = formatted_decision.get('target_price')
                 reasoning = formatted_decision.get('reasoning', '')
+                consistency_note = formatted_decision.get('consistency_note', '')
 
                 # 生成投资建议
                 recommendation = f"投资建议：{action}。"
@@ -1883,6 +1890,8 @@ class SimpleAnalysisService:
                     recommendation += f"目标价格：{target_price}元。"
                 if reasoning:
                     recommendation += f"决策依据：{reasoning}"
+                if consistency_note:
+                    recommendation += f"一致性修正：{consistency_note}"
                 logger.info(f"💡 [RECOMMENDATION] 生成投资建议: {len(recommendation)}字符")
 
             # 4. 如果还是没有，从其他报告中提取
@@ -3009,6 +3018,11 @@ class SimpleAnalysisService:
                     decision_content += f"**置信度**: {decision.get('confidence', 0):.1%}\n\n"
                     decision_content += f"**风险评分**: {decision.get('risk_score', 0):.1%}\n\n"
                     decision_content += f"**目标价位**: {decision.get('target_price', 'N/A')}\n\n"
+                    if decision.get('current_price') is not None:
+                        decision_content += f"**当前价格**: {decision.get('current_price')}\n\n"
+                    if decision.get('consistency_note'):
+                        decision_content += "## 一致性修正说明\n\n"
+                        decision_content += f"{decision.get('consistency_note')}\n\n"
                     decision_content += f"## 分析推理\n\n{decision.get('reasoning', '暂无分析推理')}\n\n"
                 else:
                     decision_content += f"{str(decision)}\n\n"

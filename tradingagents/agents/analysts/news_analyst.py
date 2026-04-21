@@ -386,9 +386,23 @@ def create_news_analyst(llm, toolkit):
                     logger.error(f"[新闻分析师] 📋 异常堆栈: {traceback.format_exc()}")
                     report = result.content if hasattr(result, 'content') else ""
             else:
-                # 有工具调用，直接使用结果
-                report = result.content
-        
+                # 有工具调用时，绝不能把空content误当成最终报告并清空tool_calls。
+                logger.info(f"[新闻分析师] 🔧 检测到工具调用，保留原始AIMessage交回工作流执行工具")
+                return {
+                    "messages": [result],
+                    "news_tool_call_count": tool_call_count + 1
+                }
+
+        if not report or not report.strip():
+            logger.warning(f"[新闻分析师] ⚠️ 最终报告为空，使用降级报告避免写入空文件")
+            report = (
+                f"## {ticker} 新闻分析降级报告\n\n"
+                f"- 分析对象：{company_name}（{ticker}）\n"
+                f"- 问题：新闻分析流程未生成有效正文，可能是工具返回为空、模型未完成总结，或消息在工具调用后被提前清空。\n"
+                f"- 处理建议：复查新闻工具返回、模型工具调用日志与 ToolMessage 汇总链路。\n"
+                f"- 结论：本次新闻维度结果无效，不应作为最终投资决策的强证据。\n"
+            )
+
         total_time_taken = (datetime.now() - start_time).total_seconds()
         logger.info(f"[新闻分析师] 新闻分析完成，总耗时: {total_time_taken:.2f}秒")
 
