@@ -1897,6 +1897,7 @@ class SimpleAnalysisService:
 
                     formatted_decision = {
                         'action': chinese_action,
+                        'execution_advice': decision.get('execution_advice', ''),
                         'confidence': self._normalize_probability_score(decision.get('confidence', 0.5), default=0.5),
                         'risk_score': self._normalize_probability_score(decision.get('risk_score', 0.3), default=0.3),
                         'target_price': target_price,
@@ -1910,6 +1911,7 @@ class SimpleAnalysisService:
                     # 处理其他类型
                     formatted_decision = {
                         'action': '持有',
+                        'execution_advice': '',
                         'confidence': 0.5,
                         'risk_score': 0.3,
                         'target_price': None,
@@ -1922,6 +1924,7 @@ class SimpleAnalysisService:
                 logger.error(f"❌ 格式化decision失败: {e}")
                 formatted_decision = {
                     'action': '持有',
+                    'execution_advice': '',
                     'confidence': 0.5,
                     'risk_score': 0.3,
                     'target_price': None,
@@ -1959,12 +1962,15 @@ class SimpleAnalysisService:
             # 3. 生成recommendation（从decision的reasoning）
             if isinstance(formatted_decision, dict):
                 action = formatted_decision.get('action', '持有')
+                execution_advice = formatted_decision.get('execution_advice', '')
                 target_price = formatted_decision.get('target_price')
                 reasoning = formatted_decision.get('reasoning', '')
                 consistency_note = formatted_decision.get('consistency_note', '')
 
                 # 生成投资建议
-                recommendation = f"投资建议：{action}。"
+                recommendation = f"方向判断：{action}。"
+                if execution_advice:
+                    recommendation += f"执行建议：{execution_advice}。"
                 if target_price:
                     recommendation += f"目标价格：{target_price}元。"
                 if reasoning:
@@ -3114,7 +3120,9 @@ class SimpleAnalysisService:
 
                 if isinstance(decision, dict):
                     decision_content += f"## 投资建议\n\n"
-                    decision_content += f"**行动**: {decision.get('action', 'N/A')}\n\n"
+                    decision_content += f"**方向判断**: {decision.get('action', 'N/A')}\n\n"
+                    if decision.get('execution_advice'):
+                        decision_content += f"**执行建议**: {decision.get('execution_advice')}\n\n"
                     decision_content += f"**置信度**: {self._format_probability_percent(decision.get('confidence', 0))}\n\n"
                     decision_content += f"**风险评分**: {self._format_probability_percent(decision.get('risk_score', 0))}\n\n"
                     decision_content += f"**目标价位**: {decision.get('target_price', 'N/A')}\n\n"

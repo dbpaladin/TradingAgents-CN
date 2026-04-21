@@ -91,6 +91,8 @@ def test_signal_processor_prefers_core_target_and_repairs_hold_conflict():
 
     assert result["target_price"] == 55.0
     assert result["action"] == "卖出"
+    assert "持仓者：61–62.5分批减仓锁利" in result["execution_advice"]
+    assert "空仓者：不追高，等待确认" in result["execution_advice"]
 
 
 def test_signal_processor_extracts_benchmark_target_from_text_when_json_missing():
@@ -129,6 +131,8 @@ def test_signal_processor_repairs_hold_when_execution_requires_exit():
 
     assert result["action"] == "卖出"
     assert "修正为“卖出”" in result["consistency_note"]
+    assert "持仓者：现有仓位先降至0–2成" in result["execution_advice"]
+    assert "空仓者：等待确认" in result["execution_advice"]
 
 
 def test_signal_processor_prefers_benchmark_target_over_stop_loss_price():

@@ -157,9 +157,11 @@ class SignalProcessor:
                     current_price=current_price,
                     text=full_signal,
                 )
+                execution_advice = self._extract_execution_advice(full_signal, action)
 
                 result = {
                     'action': action,
+                    'execution_advice': execution_advice,
                     'target_price': target_price,
                     'confidence': float(decision_data.get('confidence', 0.7)),
                     'risk_score': float(decision_data.get('risk_score', 0.5)),
@@ -226,6 +228,50 @@ class SignalProcessor:
             if match:
                 return match.group(1)
         return None
+
+    def _extract_execution_advice(self, text: str, action: str) -> str:
+        """提取更细粒度的执行建议，避免被三分类动作压平。"""
+        if not text or not isinstance(text, str):
+            return ""
+
+        normalized_lines = []
+        for line in text.splitlines():
+            stripped = re.sub(r"^[#>*\-\d\.\)\s]+", "", line).strip()
+            if stripped:
+                normalized_lines.append(stripped)
+
+        holding_line = ""
+        empty_line = ""
+        generic_line = ""
+
+        for line in normalized_lines:
+            if not holding_line and re.search(r"持仓者建议[：:]", line):
+                holding_line = line
+            elif not empty_line and re.search(r"空仓者建议[：:]", line):
+                empty_line = line
+            elif not generic_line and re.search(r"(操作建议|执行建议|明确建议|立刻执行|战略行动)[：:]", line):
+                generic_line = line
+
+        advice_parts = []
+        if holding_line:
+            advice_parts.append(holding_line.replace("持仓者建议：", "持仓者：").replace("持仓者建议:", "持仓者："))
+        if empty_line:
+            advice_parts.append(empty_line.replace("空仓者建议：", "空仓者：").replace("空仓者建议:", "空仓者："))
+        if advice_parts:
+            return "；".join(advice_parts)
+
+        if generic_line:
+            match = re.search(r"(?:操作建议|执行建议|明确建议|立刻执行|战略行动)[：:]\s*(.+)", generic_line)
+            if match:
+                return match.group(1).strip()
+
+        if action == "持有" and re.search(r"减仓观察|不追涨|等待确认|逢高兑现|降低仓位", text):
+            return "持仓者减仓观察，空仓者等待确认"
+        if action == "卖出" and re.search(r"减仓|清仓|分批卖出|逢高兑现", text):
+            return "分批减仓或卖出，优先控制回撤"
+        if action == "买入" and re.search(r"回踩|分批买入|小仓试错|突破再介入", text):
+            return "等待合适位置后分批买入，避免一次性重仓"
+        return ""
 
     def _extract_current_price(self, text: str) -> float:
         """从分析文本中提取当前价格/现价。"""
@@ -435,6 +481,7 @@ class SignalProcessor:
 
         return {
             'action': action,
+            'execution_advice': self._extract_execution_advice(text, action),
             'target_price': target_price,
             'confidence': 0.7,
             'risk_score': 0.5,
@@ -447,6 +494,7 @@ class SignalProcessor:
         """返回默认的投资决策"""
         return {
             'action': '持有',
+            'execution_advice': '',
             'target_price': None,
             'confidence': 0.5,
             'risk_score': 0.5,

@@ -116,6 +116,7 @@ def test_save_modular_reports_writes_news_fallback_and_normalizes_scores(tmp_pat
         },
         "decision": {
             "action": "卖出",
+            "execution_advice": "持仓者：先减仓并严格执行风控；空仓者：不追涨，等待回踩确认。",
             "confidence": 78,
             "risk_score": 62,
             "target_price": 56,
@@ -137,5 +138,8 @@ def test_save_modular_reports_writes_news_fallback_and_normalizes_scores(tmp_pat
     assert "72.0%" in trader_report
 
     final_decision = Path(saved_files["final_trade_decision"]).read_text(encoding="utf-8")
+    assert "方向判断" in final_decision
+    assert "执行建议" in final_decision
+    assert "空仓者：不追涨，等待回踩确认。" in final_decision
     assert "78.0%" in final_decision
     assert "62.0%" in final_decision
