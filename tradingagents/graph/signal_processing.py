@@ -60,13 +60,14 @@ class SignalProcessor:
         from tradingagents.utils.stock_utils import StockUtils
 
         market_info = StockUtils.get_market_info(stock_symbol)
-        is_china = market_info['is_china']
-        currency = market_info['currency_name']
-        currency_symbol = market_info['currency_symbol']
+        is_china = market_info.get('is_china', True)
+        currency = market_info.get('currency_name') or ('人民币' if is_china else '美元')
+        currency_symbol = market_info.get('currency_symbol') or ('¥' if is_china else '$')
         current_price = self._extract_current_price(full_signal)
 
-        logger.info(f"🔍 [SignalProcessor] 处理信号: 股票={stock_symbol}, 市场={market_info['market_name']}, 货币={currency}",
-                   extra={'stock_symbol': stock_symbol, 'market': market_info['market_name'], 'currency': currency})
+        market_name = market_info.get('market_name', '未知市场')
+        logger.info(f"🔍 [SignalProcessor] 处理信号: 股票={stock_symbol}, 市场={market_name}, 货币={currency}",
+                   extra={'stock_symbol': stock_symbol, 'market': market_name, 'currency': currency})
 
         messages = [
             (
@@ -91,7 +92,7 @@ class SignalProcessor:
 5. 所有内容必须使用中文，不允许任何英文投资建议
 
 特别注意：
-- 股票代码 {stock_symbol or '未知'} 是{market_info['market_name']}，使用{currency}计价
+- 股票代码 {stock_symbol or '未知'} 是{market_name}，使用{currency}计价
 - 目标价格必须与股票的交易货币一致（{currency_symbol}）
 
 如果某些信息在报告中没有明确提及，请使用合理的默认值。
@@ -247,19 +248,55 @@ class SignalProcessor:
 
     def _extract_target_price(self, text: str) -> float:
         """优先抓取核心/基准目标价，避免扫到普通价格数字。"""
-        priority_patterns = [
-            r'核心目标价(?:（[^）]*）)?(?:[：:]|\s)?\s*[¥\$]?(\d+(?:\.\d+)?)',
-            r'基准目标价(?:（[^）]*）)?(?:[：:]|\s)?\s*[¥\$]?(\d+(?:\.\d+)?)',
+        stop_loss_cues = ("止损", "风控位", "防守位", "支撑位", "跌破", "离场", "清仓")
+
+        # 1. 先按行提取明确的核心/基准目标价，避免把“止损位”抓成目标价。
+        explicit_line_patterns = [
+            r'我的基准目标价(?:（[^）]*）)?(?:[：:]|\s)?\s*[¥\$]?(\d+(?:\.\d+)?)',
             r'基准情景目标价(?:（[^）]*）)?(?:[：:]|\s)?\s*[¥\$]?(\d+(?:\.\d+)?)',
+            r'基准目标价(?:（[^）]*）)?(?:[：:]|\s)?\s*[¥\$]?(\d+(?:\.\d+)?)',
+            r'基准情景(?:（[^）]*）)?(?:[：:]|\s)?\s*[¥\$]?(\d+(?:\.\d+)?)',
+            r'核心目标价(?:（[^）]*）)?(?:[：:]|\s)?\s*[¥\$]?(\d+(?:\.\d+)?)',
             r'核心参考价(?:（[^）]*）)?(?:[：:]|\s)?\s*[¥\$]?(\d+(?:\.\d+)?)',
+        ]
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped or any(cue in stripped for cue in stop_loss_cues):
+                continue
+            for pattern in explicit_line_patterns:
+                match = re.search(pattern, stripped, re.IGNORECASE)
+                if match:
+                    try:
+                        return float(match.group(1))
+                    except ValueError:
+                        continue
+
+            # 处理“基准情景：¥60-70”这类区间写法，返回区间中值作为核心目标价。
+            range_match = re.search(
+                r'基准情景(?:（[^）]*）)?(?:[：:]|\s)?.*?[¥\$]?(\d+(?:\.\d+)?)\s*[-~–—至]+\s*[¥\$]?(\d+(?:\.\d+)?)',
+                stripped,
+                re.IGNORECASE,
+            )
+            if range_match:
+                try:
+                    low = float(range_match.group(1))
+                    high = float(range_match.group(2))
+                    return round((low + high) / 2, 2)
+                except ValueError:
+                    pass
+
+        # 2. 再做全文兜底，但跳过明显带止损语义的命中。
+        priority_patterns = [
             r'目标价位(?:[：:]|\s)?\s*[¥\$]?(\d+(?:\.\d+)?)',
             r'目标价(?:[：:]|\s)?\s*[¥\$]?(\d+(?:\.\d+)?)',
             r'看[到至]\s*[¥\$]?(\d+(?:\.\d+)?)',
             r'上涨[到至]\s*[¥\$]?(\d+(?:\.\d+)?)',
         ]
         for pattern in priority_patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
-            if match:
+            for match in re.finditer(pattern, text, re.IGNORECASE):
+                context = text[max(0, match.start() - 24): min(len(text), match.end() + 24)]
+                if any(cue in context for cue in stop_loss_cues):
+                    continue
                 try:
                     return float(match.group(1))
                 except ValueError:
@@ -274,11 +311,29 @@ class SignalProcessor:
         text: str,
     ) -> tuple[str, float, str]:
         """修正动作与目标价显著冲突的情况。"""
-        if current_price is None or target_price is None:
-            return action, target_price, ""
-
         bearish_cues = bool(re.search(r'减仓|卖出|锁利|不追高|等待确认|观望|回撤到位再考虑', text))
         bullish_cues = bool(re.search(r'加仓|买入|回踩买入|顺势追随|突破再介入', text))
+        strong_sell_execution_cues = bool(
+            re.search(
+                r'降到?0[\-–—~至]2成|降至0[\-–—~至]2成|降到?0–2成|降至0–2成|'
+                r'优先减/清|继续逢高出清|分批出清|剩余仓位清掉|坚决空仓|反弹.*出清|'
+                r'跌破.*清仓|清仓|空仓',
+                text,
+            )
+        )
+
+        if action == '持有' and strong_sell_execution_cues and not bullish_cues:
+            logger.info("🔍 [SignalProcessor] 检测到持有标题但执行层要求显著降仓/出清，修正为卖出")
+            note_price = f"{target_price:.2f}" if target_price is not None else "未提取"
+            note_current = f"{current_price:.2f}" if current_price is not None else "未提取"
+            return (
+                '卖出',
+                target_price,
+                f"检测到原始动作为“持有”，但执行层要求显著降仓/出清（目标价 {note_price}，现价 {note_current}），已按实际交易语义修正为“卖出”。",
+            )
+
+        if current_price is None or target_price is None:
+            return action, target_price, ""
 
         # 持有 + 明显低于现价的目标价，经常意味着“减仓/偏卖出”而不是中性持有。
         if action == '持有' and target_price < current_price * 0.97 and bearish_cues and not bullish_cues:

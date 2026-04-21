@@ -1352,7 +1352,9 @@ class SimpleAnalysisService:
                 quick_model=quick_model,
                 deep_model=deep_model,
                 llm_provider=quick_provider,  # 主要使用快速模型的供应商
-                market_type=market_type  # 使用前端传递的市场类型
+                market_type=market_type,  # 使用前端传递的市场类型
+                quick_model_config=quick_model_config,
+                deep_model_config=deep_model_config,
             )
 
             # 🔧 添加混合模式配置
@@ -2995,6 +2997,19 @@ class SimpleAnalysisService:
                             report_content = module_content
                         else:
                             report_content = str(module_content)
+
+                        if module_key == 'news_report' and not report_content.strip():
+                            stock_name = ""
+                            if isinstance(state, dict):
+                                stock_name = state.get('company_of_interest', '')
+                            report_content = (
+                                f"## {stock_symbol} 新闻分析降级报告\n\n"
+                                f"- 分析对象：{stock_name or stock_symbol}（{stock_symbol}）\n"
+                                f"- 问题：工作流最终状态中的 `news_report` 为空，原始新闻报告未成功落盘。\n"
+                                f"- 处理建议：复查新闻工具返回、模型工具调用次数限制与 ToolMessage 汇总链路。\n"
+                                f"- 结论：本次新闻维度结果无效，不应作为最终投资决策的强证据。\n"
+                            )
+                            logger.warning("⚠️ news_report 为空，已写入降级报告避免空文件")
 
                         # 保存到文件 - 使用web目录的文件名
                         file_path = reports_dir / module_info['filename']

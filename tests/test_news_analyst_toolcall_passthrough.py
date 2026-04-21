@@ -117,6 +117,17 @@ class DummyLLM:
         return DummyBoundLLM(self._result)
 
 
+class DashScopeLLM:
+    def __init__(self, result):
+        self._result = result
+
+    def invoke(self, payload):
+        return self._result
+
+    def bind_tools(self, tools):
+        return DummyBoundLLM(self._result)
+
+
 def test_news_analyst_passthroughs_tool_calls_without_empty_report():
     module = _load_news_analyst_module()
     result = DummyResult(content="", tool_calls=[{"name": "get_stock_news_unified", "args": {"stock_code": "601138"}}])
@@ -134,3 +145,58 @@ def test_news_analyst_passthroughs_tool_calls_without_empty_report():
     assert "news_report" not in output
     assert output["news_tool_call_count"] == 1
     assert output["messages"][0].tool_calls
+
+
+def test_news_analyst_returns_degraded_report_when_tool_call_limit_reached():
+    module = _load_news_analyst_module()
+    llm = DummyLLM(DummyResult(content="", tool_calls=[]))
+    node = module.create_news_analyst(llm, toolkit=None)
+
+    output = node({
+        "trade_date": "2026-04-21",
+        "company_of_interest": "601138",
+        "session_id": "test",
+        "messages": [],
+        "news_tool_call_count": 3,
+    })
+
+    assert "news_report" in output
+    assert "降级报告" in output["news_report"]
+    assert output["messages"][0].content == output["news_report"]
+    assert output["messages"][0].tool_calls == []
+
+
+def test_news_analyst_degrades_placeholder_preface_without_real_summary():
+    module = _load_news_analyst_module()
+    llm = DummyLLM(DummyResult(content="我将立即调用工具获取股票601138的最新新闻数据。", tool_calls=[]))
+    node = module.create_news_analyst(llm, toolkit=None)
+
+    output = node({
+        "trade_date": "2026-04-21",
+        "company_of_interest": "601138",
+        "session_id": "test",
+        "messages": [],
+        "news_tool_call_count": 0,
+    })
+
+    assert "news_report" in output
+    assert "降级报告" in output["news_report"]
+    assert "工具调用前导语" in output["news_report"]
+
+
+def test_news_analyst_degrades_placeholder_preface_in_prefetch_mode():
+    module = _load_news_analyst_module()
+    llm = DashScopeLLM(DummyResult(content="我将立即调用工具获取股票601138的最新新闻数据。", tool_calls=[]))
+    node = module.create_news_analyst(llm, toolkit=None)
+
+    output = node({
+        "trade_date": "2026-04-21",
+        "company_of_interest": "601138",
+        "session_id": "test",
+        "messages": [],
+        "news_tool_call_count": 0,
+    })
+
+    assert "news_report" in output
+    assert "降级报告" in output["news_report"]
+    assert "工具调用前导语" in output["news_report"]
