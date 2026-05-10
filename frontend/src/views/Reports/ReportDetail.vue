@@ -385,7 +385,8 @@ const downloadReport = async (format: string = 'markdown') => {
 
     // 根据格式设置文件扩展名
     const ext = getFileExtension(format)
-    a.download = `${report.value.stock_symbol}_分析报告_${report.value.analysis_date}.${ext}`
+    const stockLabel = getReportDownloadLabel(report.value.stock_name, report.value.stock_symbol)
+    a.download = `${stockLabel}_分析报告_${report.value.analysis_date}.${ext}`
 
     document.body.appendChild(a)
     a.click()
@@ -406,6 +407,13 @@ const downloadReport = async (format: string = 'markdown') => {
       ElMessage.error(`下载报告失败: ${error.message || '未知错误'}`)
     }
   }
+}
+
+const getReportDownloadLabel = (stockName?: string, stockSymbol?: string): string => {
+  const symbol = String(stockSymbol || 'unknown').trim()
+  const name = String(stockName || '').trim()
+  if (!name || name === symbol) return symbol
+  return `${name}（${symbol}）`
 }
 
 // 辅助函数：获取格式名称

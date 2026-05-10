@@ -109,8 +109,10 @@ def test_save_modular_reports_writes_news_fallback_and_normalizes_scores(tmp_pat
 
     result = {
         "analysis_date": "2026-04-21",
+        "stock_name": "工业富联",
         "state": {
             "company_of_interest": "工业富联",
+            "market_report": "趋势维持强势，关注量价配合。",
             "trader_investment_plan": "**置信度：0.69**\n**风险评分：0.72**\n最终交易建议: **卖出**",
             "final_trade_decision": "建议：卖出",
         },
@@ -132,10 +134,15 @@ def test_save_modular_reports_writes_news_fallback_and_normalizes_scores(tmp_pat
     assert news_report.exists()
     assert news_report.read_text(encoding="utf-8").strip()
     assert "降级报告" in news_report.read_text(encoding="utf-8")
+    assert "工业富联（601138）" in news_report.read_text(encoding="utf-8")
+
+    market_report = Path(saved_files["market_report"]).read_text(encoding="utf-8")
+    assert "工业富联（601138）" in market_report
 
     trader_report = Path(saved_files["trader_investment_plan"]).read_text(encoding="utf-8")
     assert "69.0%" in trader_report
     assert "72.0%" in trader_report
+    assert "工业富联（601138）" in trader_report
 
     final_decision = Path(saved_files["final_trade_decision"]).read_text(encoding="utf-8")
     assert "方向判断" in final_decision
@@ -143,3 +150,4 @@ def test_save_modular_reports_writes_news_fallback_and_normalizes_scores(tmp_pat
     assert "空仓者：不追涨，等待回踩确认。" in final_decision
     assert "78.0%" in final_decision
     assert "62.0%" in final_decision
+    assert "工业富联（601138）" in final_decision

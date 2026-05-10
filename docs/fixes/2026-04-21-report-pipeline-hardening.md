@@ -177,3 +177,26 @@ python3 -m py_compile \
 ### 5. 实跑状态
 
 已发起 `601138` 的真实重跑验证，但本轮被外部模型接口长时间重试阻塞，未能在当次会话内产出新的完整报告。该阻塞点已从“本地代码逻辑错误”转为“上游模型调用稳定性”问题。
+
+## Follow-up（2026-05-10：报告股票名称展示统一）
+
+后续又收到用户反馈：最终分析报告虽然数据模型里已有 `stock_name`，但多个最终产物仍然只显示股票代码。
+
+本轮补强聚焦“最终展示统一”而不是“数据采集补字段”：
+
+- `app/services/simple_analysis_service.py` 新增统一股票展示名与 `分析对象` 正文兜底
+- `web/utils/report_exporter.py` 统一汇总导出与模块导出标题
+- `app/routers/reports.py` 修复 Markdown 下载标题
+- `frontend/src/views/Reports/ReportDetail.vue` 修复下载文件名
+
+补强目标是确保：
+
+- 模块报告标题显示 `股票名称（代码）`
+- 最终决策报告显示 `分析对象`
+- 降级新闻报告也显示 `股票名称（代码）`
+- 下载到本地的文件名不再只有股票代码
+
+关联文档：
+
+- `docs/fixes/report-stock-display-name-unification.md`
+- `history_chat/2026-05-10_143025_分析报告股票名称展示修复_归档文档更新与GitHub提交.md`

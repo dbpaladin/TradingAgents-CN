@@ -683,6 +683,42 @@ class SimpleAnalysisService:
             logger.warning(f"⚠️ 补齐股票名称时出现异常: {e}")
         return tasks
 
+    def _get_stock_display_name(self, stock_symbol: str, stock_name: Optional[str] = None) -> str:
+        """统一格式化股票展示名，优先输出“名称（代码）”"""
+        resolved_name = (stock_name or "").strip()
+        if not resolved_name or resolved_name == stock_symbol or resolved_name == f"股票{stock_symbol}":
+            return stock_symbol
+        return f"{resolved_name}（{stock_symbol}）"
+
+    def _ensure_report_has_stock_identity(
+        self,
+        content: str,
+        report_title: str,
+        stock_symbol: str,
+        stock_name: Optional[str] = None,
+    ) -> str:
+        """确保报告正文显式包含股票名称与代码，避免最终产物只有代码。"""
+        normalized_content = (content or "").strip()
+        display_name = self._get_stock_display_name(stock_symbol, stock_name)
+        identity_line = f"**分析对象**：{display_name}"
+
+        if not normalized_content:
+            return f"# {report_title}\n\n{identity_line}\n"
+
+        preview = normalized_content[:300]
+        if identity_line in preview or display_name in preview:
+            return normalized_content
+
+        if normalized_content.startswith("#"):
+            lines = normalized_content.splitlines()
+            first_line = lines[0] if lines else f"# {report_title}"
+            remainder = "\n".join(lines[1:]).lstrip("\n")
+            if remainder:
+                return f"{first_line}\n\n{identity_line}\n\n{remainder}"
+            return f"{first_line}\n\n{identity_line}\n"
+
+        return f"# {report_title}\n\n{identity_line}\n\n{normalized_content}"
+
     def _build_news_report_fallback(
         self,
         stock_symbol: str,
@@ -2999,72 +3035,78 @@ class SimpleAnalysisService:
 
             state = result.get('state', {})
             saved_files = {}
+            stock_name = (
+                result.get("stock_name")
+                or (state.get("company_of_interest") if isinstance(state, dict) else None)
+                or self._resolve_stock_name(stock_symbol)
+            )
+            stock_display_name = self._get_stock_display_name(stock_symbol, stock_name)
 
             # 定义报告模块映射 - 完全按照web目录的定义
             report_modules = {
                 'market_report': {
                     'filename': 'market_report.md',
-                    'title': f'{stock_symbol} 股票技术分析报告',
+                    'title': f'{stock_display_name} 股票技术分析报告',
                     'state_key': 'market_report'
                 },
                 'a_share_sentiment_report': {
                     'filename': 'a_share_sentiment_report.md',
-                    'title': f'{stock_symbol} A股盘面情绪分析报告',
+                    'title': f'{stock_display_name} A股盘面情绪分析报告',
                     'state_key': 'a_share_sentiment_report'
                 },
                 'fund_flow_report': {
                     'filename': 'fund_flow_report.md',
-                    'title': f'{stock_symbol} A股资金面分析报告',
+                    'title': f'{stock_display_name} A股资金面分析报告',
                     'state_key': 'fund_flow_report'
                 },
                 'theme_rotation_report': {
                     'filename': 'theme_rotation_report.md',
-                    'title': f'{stock_symbol} A股题材轮动分析报告',
+                    'title': f'{stock_display_name} A股题材轮动分析报告',
                     'state_key': 'theme_rotation_report'
                 },
                 'institutional_theme_report': {
                     'filename': 'institutional_theme_report.md',
-                    'title': f'{stock_symbol} 机构布局题材分析报告',
+                    'title': f'{stock_display_name} 机构布局题材分析报告',
                     'state_key': 'institutional_theme_report'
                 },
                 'sentiment_report': {
                     'filename': 'sentiment_report.md',
-                    'title': f'{stock_symbol} 公共舆情分析报告',
+                    'title': f'{stock_display_name} 公共舆情分析报告',
                     'state_key': 'sentiment_report'
                 },
                 'news_report': {
                     'filename': 'news_report.md',
-                    'title': f'{stock_symbol} 新闻事件分析报告',
+                    'title': f'{stock_display_name} 新闻事件分析报告',
                     'state_key': 'news_report'
                 },
                 'fundamentals_report': {
                     'filename': 'fundamentals_report.md',
-                    'title': f'{stock_symbol} 基本面分析报告',
+                    'title': f'{stock_display_name} 基本面分析报告',
                     'state_key': 'fundamentals_report'
                 },
                 'investment_plan': {
                     'filename': 'investment_plan.md',
-                    'title': f'{stock_symbol} 投资决策报告',
+                    'title': f'{stock_display_name} 投资决策报告',
                     'state_key': 'investment_plan'
                 },
                 'trader_investment_plan': {
                     'filename': 'trader_investment_plan.md',
-                    'title': f'{stock_symbol} 交易计划报告',
+                    'title': f'{stock_display_name} 交易计划报告',
                     'state_key': 'trader_investment_plan'
                 },
                 'final_trade_decision': {
                     'filename': 'final_trade_decision.md',
-                    'title': f'{stock_symbol} 最终投资决策',
+                    'title': f'{stock_display_name} 最终投资决策',
                     'state_key': 'final_trade_decision'
                 },
                 'investment_debate_state': {
                     'filename': 'research_team_decision.md',
-                    'title': f'{stock_symbol} 研究团队决策报告',
+                    'title': f'{stock_display_name} 研究团队决策报告',
                     'state_key': 'investment_debate_state'
                 },
                 'risk_debate_state': {
                     'filename': 'risk_management_decision.md',
-                    'title': f'{stock_symbol} 风险管理团队决策报告',
+                    'title': f'{stock_display_name} 风险管理团队决策报告',
                     'state_key': 'risk_debate_state'
                 }
             }
@@ -3090,6 +3132,12 @@ class SimpleAnalysisService:
                             logger.warning("⚠️ news_report 为空，已写入降级报告避免空文件")
 
                         report_content = self._normalize_report_score_text(report_content)
+                        report_content = self._ensure_report_has_stock_identity(
+                            content=report_content,
+                            report_title=module_info['title'],
+                            stock_symbol=stock_symbol,
+                            stock_name=stock_name,
+                        )
 
                         # 保存到文件 - 使用web目录的文件名
                         file_path = reports_dir / module_info['filename']
@@ -3104,9 +3152,14 @@ class SimpleAnalysisService:
 
             if 'news_report' not in saved_files:
                 news_fallback_path = reports_dir / "news_report.md"
-                news_fallback = self._build_news_report_fallback(
+                news_fallback = self._ensure_report_has_stock_identity(
+                    content=self._build_news_report_fallback(
+                        stock_symbol=stock_symbol,
+                        state=state,
+                    ),
+                    report_title=report_modules['news_report']['title'],
                     stock_symbol=stock_symbol,
-                    state=state,
+                    stock_name=stock_name,
                 )
                 with open(news_fallback_path, 'w', encoding='utf-8') as f:
                     f.write(news_fallback)
@@ -3116,7 +3169,8 @@ class SimpleAnalysisService:
             # 保存最终决策报告 - 完全按照web目录的方式
             decision = result.get('decision', {})
             if decision:
-                decision_content = f"# {stock_symbol} 最终投资决策\n\n"
+                decision_content = f"# {stock_display_name} 最终投资决策\n\n"
+                decision_content += f"**分析对象**：{stock_display_name}\n\n"
 
                 if isinstance(decision, dict):
                     decision_content += f"## 投资建议\n\n"
@@ -3145,6 +3199,7 @@ class SimpleAnalysisService:
             # 保存分析元数据文件 - 完全按照web目录的方式
             metadata = {
                 'stock_symbol': stock_symbol,
+                'stock_name': stock_name,
                 'analysis_date': analysis_date_str,
                 'timestamp': datetime.now().isoformat(),
                 'research_depth': result.get('research_depth', 1),

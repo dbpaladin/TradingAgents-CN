@@ -36,6 +36,43 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+def _get_stock_display_name(stock_symbol: str, stock_name: Optional[str] = None) -> str:
+    """统一格式化股票展示名，优先输出“名称（代码）”"""
+    resolved_name = (stock_name or "").strip()
+    if not resolved_name or resolved_name == stock_symbol or resolved_name == f"股票{stock_symbol}":
+        return stock_symbol
+    return f"{resolved_name}（{stock_symbol}）"
+
+
+def _ensure_report_has_stock_identity(
+    content: str,
+    report_title: str,
+    stock_symbol: str,
+    stock_name: Optional[str] = None,
+) -> str:
+    """确保报告正文显式包含股票名称与代码。"""
+    normalized_content = (content or "").strip()
+    display_name = _get_stock_display_name(stock_symbol, stock_name)
+    identity_line = f"**分析对象**：{display_name}"
+
+    if not normalized_content:
+        return f"# {report_title}\n\n{identity_line}\n"
+
+    preview = normalized_content[:300]
+    if identity_line in preview or display_name in preview:
+        return normalized_content
+
+    if normalized_content.startswith('#'):
+        lines = normalized_content.splitlines()
+        first_line = lines[0] if lines else f"# {report_title}"
+        remainder = "\n".join(lines[1:]).lstrip("\n")
+        if remainder:
+            return f"{first_line}\n\n{identity_line}\n\n{remainder}"
+        return f"{first_line}\n\n{identity_line}\n"
+
+    return f"# {report_title}\n\n{identity_line}\n\n{normalized_content}"
+
 # 导入Docker适配器
 try:
     from .docker_pdf_adapter import (
@@ -167,6 +204,10 @@ class ReportExporter:
         """生成Markdown格式的报告"""
 
         stock_symbol = self._clean_text_for_markdown(results.get('stock_symbol', 'N/A'))
+        raw_stock_name = results.get('stock_name') or results.get('company_name')
+        stock_display_name = self._clean_text_for_markdown(
+            _get_stock_display_name(stock_symbol, raw_stock_name)
+        )
         decision = results.get('decision', {})
         state = results.get('state', {})
         is_demo = results.get('is_demo', False)
@@ -180,10 +221,11 @@ class ReportExporter:
         reasoning = self._clean_text_for_markdown(decision.get('reasoning', '暂无分析推理'))
 
         # 构建Markdown内容
-        md_content = f"""# {stock_symbol} 股票分析报告
+        md_content = f"""# {stock_display_name} 股票分析报告
 
 **生成时间**: {timestamp}
 **分析状态**: {'演示模式' if is_demo else '正式分析'}
+**分析对象**: {stock_display_name}
 
 ## 🎯 投资决策摘要
 
@@ -670,63 +712,65 @@ def save_modular_reports_to_results_dir(results: Dict[str, Any], stock_symbol: s
 
         state = results.get('state', {})
         saved_files = {}
+        stock_name = results.get("stock_name") or state.get("company_of_interest")
+        stock_display_name = _get_stock_display_name(stock_symbol, stock_name)
 
         # 定义报告模块映射（与CLI版本保持一致）
         report_modules = {
             'market_report': {
                 'filename': 'market_report.md',
-                'title': f'{stock_symbol} 股票技术分析报告',
+                'title': f'{stock_display_name} 股票技术分析报告',
                 'state_key': 'market_report'
             },
             'a_share_sentiment_report': {
                 'filename': 'a_share_sentiment_report.md',
-                'title': f'{stock_symbol} A股盘面情绪分析报告',
+                'title': f'{stock_display_name} A股盘面情绪分析报告',
                 'state_key': 'a_share_sentiment_report'
             },
             'fund_flow_report': {
                 'filename': 'fund_flow_report.md',
-                'title': f'{stock_symbol} A股资金面分析报告',
+                'title': f'{stock_display_name} A股资金面分析报告',
                 'state_key': 'fund_flow_report'
             },
             'sentiment_report': {
                 'filename': 'sentiment_report.md',
-                'title': f'{stock_symbol} 公共舆情分析报告',
+                'title': f'{stock_display_name} 公共舆情分析报告',
                 'state_key': 'sentiment_report'
             },
             'news_report': {
                 'filename': 'news_report.md',
-                'title': f'{stock_symbol} 新闻事件分析报告',
+                'title': f'{stock_display_name} 新闻事件分析报告',
                 'state_key': 'news_report'
             },
             'fundamentals_report': {
                 'filename': 'fundamentals_report.md',
-                'title': f'{stock_symbol} 基本面分析报告',
+                'title': f'{stock_display_name} 基本面分析报告',
                 'state_key': 'fundamentals_report'
             },
             'investment_plan': {
                 'filename': 'investment_plan.md',
-                'title': f'{stock_symbol} 投资决策报告',
+                'title': f'{stock_display_name} 投资决策报告',
                 'state_key': 'investment_plan'
             },
             'trader_investment_plan': {
                 'filename': 'trader_investment_plan.md',
-                'title': f'{stock_symbol} 交易计划报告',
+                'title': f'{stock_display_name} 交易计划报告',
                 'state_key': 'trader_investment_plan'
             },
             'final_trade_decision': {
                 'filename': 'final_trade_decision.md',
-                'title': f'{stock_symbol} 最终投资决策',
+                'title': f'{stock_display_name} 最终投资决策',
                 'state_key': 'final_trade_decision'
             },
             # 添加团队决策报告模块
             'investment_debate_state': {
                 'filename': 'research_team_decision.md',
-                'title': f'{stock_symbol} 研究团队决策报告',
+                'title': f'{stock_display_name} 研究团队决策报告',
                 'state_key': 'investment_debate_state'
             },
             'risk_debate_state': {
                 'filename': 'risk_management_decision.md',
-                'title': f'{stock_symbol} 风险管理团队决策报告',
+                'title': f'{stock_display_name} 风险管理团队决策报告',
                 'state_key': 'risk_debate_state'
             }
         }
@@ -754,6 +798,13 @@ def save_modular_reports_to_results_dir(results: Dict[str, Any], stock_symbol: s
                 else:
                     report_content = f"# {module_info['title']}\n\n{str(content)}"
 
+                report_content = _ensure_report_has_stock_identity(
+                    content=report_content,
+                    report_title=module_info['title'],
+                    stock_symbol=stock_symbol,
+                    stock_name=stock_name,
+                )
+
                 # 保存文件
                 file_path = reports_dir / module_info['filename']
                 with open(file_path, 'w', encoding='utf-8') as f:
@@ -765,7 +816,8 @@ def save_modular_reports_to_results_dir(results: Dict[str, Any], stock_symbol: s
         # 如果有决策信息，也保存最终决策报告
         decision = results.get('decision', {})
         if decision:
-            decision_content = f"# {stock_symbol} 最终投资决策\n\n"
+            decision_content = f"# {stock_display_name} 最终投资决策\n\n"
+            decision_content += f"**分析对象**：{stock_display_name}\n\n"
 
             if isinstance(decision, dict):
                 decision_content += f"## 投资建议\n\n"
@@ -787,6 +839,7 @@ def save_modular_reports_to_results_dir(results: Dict[str, Any], stock_symbol: s
         # 保存分析元数据文件，包含研究深度等信息
         metadata = {
             'stock_symbol': stock_symbol,
+            'stock_name': stock_name,
             'analysis_date': analysis_date,
             'timestamp': datetime.now().isoformat(),
             'research_depth': results.get('research_depth', 1),

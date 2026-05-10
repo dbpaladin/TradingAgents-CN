@@ -98,6 +98,14 @@ def _build_report_query(report_id: str) -> Dict[str, Any]:
         pass
     return {"$or": ors}
 
+
+def _format_stock_display_name(stock_symbol: str, stock_name: Optional[str] = None) -> str:
+    """统一格式化股票展示名，优先输出“名称（代码）”"""
+    resolved_name = (stock_name or "").strip()
+    if not resolved_name or resolved_name == stock_symbol:
+        return stock_symbol
+    return f"{resolved_name}（{stock_symbol}）"
+
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
 class ReportFilter(BaseModel):
@@ -452,6 +460,8 @@ async def download_report(
             raise HTTPException(status_code=404, detail="报告不存在")
 
         stock_symbol = doc.get("stock_symbol", "unknown")
+        stock_name = doc.get("stock_name") or get_stock_name(stock_symbol)
+        stock_display_name = _format_stock_display_name(stock_symbol, stock_name)
         analysis_date = doc.get("analysis_date", datetime.now().strftime("%Y-%m-%d"))
 
         if format == "json":
@@ -476,7 +486,8 @@ async def download_report(
             content_parts = []
 
             # 添加标题
-            content_parts.append(f"# {stock_symbol} 分析报告")
+            content_parts.append(f"# {stock_display_name} 分析报告")
+            content_parts.append(f"**分析对象**: {stock_display_name}")
             content_parts.append(f"**分析日期**: {analysis_date}")
             content_parts.append(f"**分析师**: {', '.join(doc.get('analysts', []))}")
             content_parts.append(f"**研究深度**: {doc.get('research_depth', 1)}")
