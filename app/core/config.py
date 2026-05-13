@@ -129,6 +129,16 @@ class Settings(BaseSettings):
     STOCK_DATA_API_URL: str = Field(default="")
     STOCK_DATA_API_KEY: str = Field(default="")
 
+    # A 股增强数据源 PoC 配置
+    A_STOCK_DATA_ENABLED: bool = Field(default=True)
+    A_STOCK_TENCENT_QUOTES_ENABLED: bool = Field(default=True)
+    A_STOCK_MOOTDX_ENABLED: bool = Field(default=True)
+    A_STOCK_NORTHBOUND_ENABLED: bool = Field(default=True)
+    A_STOCK_ANNOUNCEMENTS_ENABLED: bool = Field(default=True)
+    A_STOCK_QUOTE_TTL_SECONDS: int = Field(default=30)
+    A_STOCK_NORTHBOUND_TTL_SECONDS: int = Field(default=30)
+    A_STOCK_REQUEST_TIMEOUT_SECONDS: int = Field(default=10)
+
     # SSE 配置
     SSE_POLL_TIMEOUT_SECONDS: float = Field(default=1.0)
     SSE_HEARTBEAT_INTERVAL_SECONDS: int = Field(default=10)
