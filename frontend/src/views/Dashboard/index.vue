@@ -417,9 +417,10 @@ const downloadReport = async (analysis: AnalysisTask) => {
     const a = document.createElement('a')
     a.href = url
     const code = (analysis as any).stock_code || (analysis as any).stock_symbol || 'stock'
+    const stockLabel = getStockDisplayLabel((analysis as any).stock_name, code)
     const dateStr = (analysis as any).analysis_date || (analysis as any).start_time || ''
     // 🔥 统一文件名格式：{code}_分析报告_{date}.md
-    a.download = `${code}_分析报告_${String(dateStr).slice(0,10)}.md`
+    a.download = `${stockLabel}_分析报告_${String(dateStr).slice(0,10)}.md`
     document.body.appendChild(a)
     a.click()
     window.URL.revokeObjectURL(url)
@@ -429,6 +430,13 @@ const downloadReport = async (analysis: AnalysisTask) => {
     console.error('下载报告出错:', err)
     ElMessage.error('下载失败，请稍后重试')
   }
+}
+
+const getStockDisplayLabel = (stockName?: string, stockCode?: string) => {
+  const code = String(stockCode || 'stock').trim()
+  const name = String(stockName || '').trim()
+  if (!name || name === code) return code
+  return `${name}（${code}）`
 }
 
 const openNewsUrl = (url?: string) => {

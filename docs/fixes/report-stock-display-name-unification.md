@@ -97,3 +97,26 @@ python -m py_compile app/services/simple_analysis_service.py web/utils/report_ex
 ## 关联归档
 
 - `history_chat/2026-05-10_143025_分析报告股票名称展示修复_归档文档更新与GitHub提交.md`
+
+## Follow-up（2026-05-13：`analysis` 旁路接口补齐）
+
+后续用户再次反馈“问题又出现了”。复核后确认并不是上一次修复被覆盖，而是还有一条旁路没有接入同样的 `stock_name` 规则：
+
+- `app/routers/analysis.py` 在任务状态与结果返回中没有统一补回 `stock_name`
+- `frontend/src/views/Analysis/SingleAnalysis.vue`
+- `frontend/src/views/Reports/index.vue`
+- `frontend/src/views/Dashboard/index.vue`
+
+这会导致：
+
+- 报告详情页正常显示名称
+- 但单股分析页、仪表盘或报告列表下载入口仍可能只显示股票代码
+
+本轮补齐后：
+
+- `analysis` 任务状态与结果接口都会显式返回 `stock_name`
+- 上述三个前端下载入口统一改为优先使用 `股票名称（股票代码）`
+
+关联归档：
+
+- `history_chat/2026-05-13_091314_报告名称显示复发排查_旁路接口补齐与GitHub提交.md`
