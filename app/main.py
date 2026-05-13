@@ -70,6 +70,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from app.services.quotes_ingestion_service import QuotesIngestionService
 from app.routers import paper as paper_router
 from app.routers import backtest as backtest_router
+from app.routers import a_stock_enhanced_debug as a_stock_enhanced_debug_router
 
 
 def get_version() -> str:
@@ -822,6 +823,7 @@ app.include_router(news_data.router, tags=["news-data"])
 app.include_router(social_media.router, tags=["social-media"])
 app.include_router(internal_messages.router, tags=["internal-messages"])
 app.include_router(backtest_router.router, prefix="/api/backtest", tags=["backtest"])
+app.include_router(a_stock_enhanced_debug_router.router)
 
 
 
