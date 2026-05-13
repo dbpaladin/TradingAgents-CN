@@ -326,10 +326,12 @@ import {
   formatDateTime
 } from '@/api/operationLogs'
 
+type TagType = 'primary' | 'success' | 'warning' | 'info' | 'danger'
+
 // 响应式数据
 const loading = ref(false)
 const detailDialogVisible = ref(false)
-const selectedLog = ref(null)
+const selectedLog = ref<OperationLog | null>(null)
 const currentPage = ref(1)
 const pageSize = ref(20)
 const totalLogs = ref(0)
@@ -339,12 +341,19 @@ const actionTypeChart = ref()
 const operationTrendChart = ref()
 
 // 筛选表单
+type FilterForm = {
+  dateRange: string[]
+  actionType: string
+  success: '' | boolean
+  keyword: string
+}
+
 const filterForm = reactive({
   dateRange: [],
   actionType: '',
-  success: '',
+  success: '' as '' | boolean,
   keyword: ''
-})
+} as FilterForm)
 
 // 统计数据
 const stats = reactive({
@@ -361,8 +370,12 @@ const logs = ref<OperationLog[]>([])
 const statsData = ref<OperationLogStats | null>(null)
 
 // 方法
-const getActionTypeTag = (actionType: string): string => {
-  return getActionTypeTagColor(actionType)
+const getActionTypeTag = (actionType: string): TagType => {
+  const tagType = getActionTypeTagColor(actionType)
+  if (tagType === 'primary' || tagType === 'success' || tagType === 'warning' || tagType === 'info' || tagType === 'danger') {
+    return tagType
+  }
+  return 'info'
 }
 
 const loadLogs = async () => {
@@ -497,7 +510,7 @@ const clearLogs = async () => {
 }
 
 const viewLogDetails = (row: any) => {
-  selectedLog.value = row
+  selectedLog.value = row as OperationLog
   detailDialogVisible.value = true
 }
 

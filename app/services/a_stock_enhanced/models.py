@@ -94,5 +94,21 @@ class AnnouncementItem:
     raw: Dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class ResearchReportItem:
+    code: str
+    title: str
+    org: str = ""
+    publish_date: str = ""
+    rating: str = ""
+    last_rating: str = ""
+    rating_change: str = ""
+    eps_forecast_1y: Optional[float] = None
+    eps_forecast_2y: Optional[float] = None
+    eps_forecast_3y: Optional[float] = None
+    source: str = "unknown"
+    raw: Dict[str, Any] = field(default_factory=dict)
+
+
 def as_dict_list(items: List[Any]) -> List[Dict[str, Any]]:
     return [item.__dict__ for item in items]

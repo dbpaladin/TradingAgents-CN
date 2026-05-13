@@ -6,9 +6,10 @@ from typing import Dict, List, Optional
 
 from .announcements import AnnouncementsProvider
 from .config import get_a_stock_enhanced_config
-from .models import AnnouncementItem, EnhancedKlineBar, EnhancedQuote, F10Document, FinanceSnapshot, NorthboundIntradayPoint
+from .models import AnnouncementItem, EnhancedKlineBar, EnhancedQuote, F10Document, FinanceSnapshot, NorthboundIntradayPoint, ResearchReportItem
 from .mootdx_client import MootdxProvider
 from .northbound import NorthboundProvider
+from .research_reports import ResearchReportsProvider
 from .tencent_quotes import TencentQuotesProvider
 from .utils import coalesce, normalize_code
 
@@ -30,6 +31,7 @@ class AStockEnhancedService:
         self.mootdx = MootdxProvider()
         self.northbound = NorthboundProvider()
         self.announcements = AnnouncementsProvider()
+        self.research_reports = ResearchReportsProvider()
         self._northbound_cache: List[NorthboundIntradayPoint] = []
         self._northbound_cache_ts: float = 0.0
         self._northbound_lock = asyncio.Lock()
@@ -122,6 +124,16 @@ class AStockEnhancedService:
             code=code,
             start_date=start_date,
             end_date=end_date,
+            limit=limit,
+        )
+
+    def get_research_reports(
+        self,
+        code: str,
+        limit: int = 10,
+    ) -> List[ResearchReportItem]:
+        return self.research_reports.get_reports(
+            code=code,
             limit=limit,
         )
 

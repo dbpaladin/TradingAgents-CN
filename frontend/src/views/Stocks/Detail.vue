@@ -185,14 +185,14 @@
               <!-- 报告列表预览 -->
               <div class="reports-preview">
                 <el-tag
-                  v-for="(content, key) in lastAnalysis.reports"
-                  :key="key"
+                  v-for="report in normalizedReportModules"
+                  :key="report.key"
                   size="small"
                   effect="plain"
                   class="report-tag"
-                  @click="openReport(key)"
+                  @click="openReport(report.key)"
                 >
-                  {{ formatReportName(key) }}
+                  {{ report.title }}
                 </el-tag>
               </div>
             </div>
@@ -291,14 +291,14 @@
     >
       <el-tabs v-model="activeReportTab" type="border-card">
         <el-tab-pane
-          v-for="(content, key) in lastAnalysis?.reports"
-          :key="key"
-          :label="formatReportName(key)"
-          :name="key"
+          v-for="report in normalizedReportModules"
+          :key="report.key"
+          :label="report.title"
+          :name="report.key"
         >
           <div class="report-content">
             <el-scrollbar height="500px">
-              <div class="markdown-body" v-html="renderMarkdown(content)"></div>
+              <div class="markdown-body" v-html="renderMarkdown(report.content)"></div>
             </el-scrollbar>
           </div>
         </el-tab-pane>
@@ -375,6 +375,7 @@ import VChart from 'vue-echarts'
 import type { EChartsOption } from 'echarts'
 import { favoritesApi } from '@/api/favorites'
 import { useNotificationStore } from '@/stores/notifications'
+import { normalizeReportTabs } from '@/utils/reportTabs'
 
 
 echartsUse([CandlestickChart, GridComponent, TooltipComponent, DataZoomComponent, LegendComponent, TitleComponent, CanvasRenderer])
@@ -394,6 +395,7 @@ const lastTaskInfo = ref<any | null>(null) // 保存任务信息（包含 end_ti
 // 报告对话框
 const showReportsDialog = ref(false)
 const activeReportTab = ref('')
+const normalizedReportModules = computed(() => normalizeReportTabs(lastAnalysis.value?.reports || {}))
 
 const notifStore = useNotificationStore()
 
@@ -1077,50 +1079,11 @@ function formatNewsTime(dateStr: string | null | undefined): string {
   }
 }
 
-// 格式化报告名称
-function formatReportName(key: string): string {
-  // 完整的13个报告映射
-  const nameMap: Record<string, string> = {
-    // 分析师团队
-    'market_report': '📈 市场技术分析',
-    'a_share_sentiment_report': '🔥 A股盘面情绪',
-    'fund_flow_report': '💸 A股资金面',
-    'theme_rotation_report': '🧭 A股题材轮动',
-    'institutional_theme_report': '🏦 机构布局题材',
-    'sentiment_report': '💬 公共舆情分析',
-    'news_report': '📰 新闻事件分析',
-    'fundamentals_report': '💰 基本面分析',
-
-    // 研究团队 (3个)
-    'bull_researcher': '🐂 多头研究员',
-    'bear_researcher': '🐻 空头研究员',
-    'research_team_decision': '🔬 研究经理决策',
-
-    // 交易团队 (1个)
-    'trader_investment_plan': '💼 交易员计划',
-
-    // 风险管理团队 (4个)
-    'risky_analyst': '⚡ 激进分析师',
-    'safe_analyst': '🛡️ 保守分析师',
-    'neutral_analyst': '⚖️ 中性分析师',
-    'risk_management_decision': '👔 投资组合经理',
-
-    // 最终决策 (1个)
-    'final_trade_decision': '🎯 最终交易决策',
-
-    // 兼容旧字段
-    'investment_plan': '📋 投资建议',
-    'investment_debate_state': '🔬 研究团队决策（旧）',
-    'risk_debate_state': '⚖️ 风险管理团队（旧）'
-  }
-  return nameMap[key] || key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
-}
-
 // 渲染Markdown
 function renderMarkdown(content: string): string {
   if (!content) return '<p>暂无内容</p>'
   try {
-    return marked(content)
+    return marked.parse(content) as string
   } catch (e) {
     console.error('Markdown渲染失败:', e)
     return `<pre>${content}</pre>`
@@ -1161,9 +1124,9 @@ function exportReport() {
   fullReport += `**信心度**: ${fmtConf(lastAnalysis.value.confidence_score)}\n\n`
   fullReport += `---\n\n`
 
-  for (const [key, content] of Object.entries(lastAnalysis.value.reports)) {
-    fullReport += `## ${formatReportName(key)}\n\n`
-    fullReport += `${content}\n\n`
+  for (const report of normalizedReportModules.value) {
+    fullReport += `## ${report.title}\n\n`
+    fullReport += `${report.content}\n\n`
     fullReport += `---\n\n`
   }
 

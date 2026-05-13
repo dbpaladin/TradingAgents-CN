@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, Query
 from app.core.response import ok
 from app.routers.auth_db import get_current_user
 from app.services.a_stock_enhanced import get_a_stock_enhanced_service
-from app.services.a_stock_enhanced.models import as_dict_list
+from app.services.a_stock_enhanced.models import as_dict_list, ResearchReportItem
 
 router = APIRouter(prefix="/api/debug/a-stock-enhanced", tags=["a-stock-enhanced-debug"])
 
@@ -37,6 +37,17 @@ async def get_enhanced_kline(
 ):
     service = get_a_stock_enhanced_service()
     items = service.get_kline_enhanced(code=code, period=period, limit=limit)
+    return ok(data=as_dict_list(items))
+
+
+@router.get("/research-reports/{code}")
+async def get_research_reports(
+    code: str,
+    limit: int = Query(default=10, ge=1, le=50),
+    current_user: dict = Depends(get_current_user),
+):
+    service = get_a_stock_enhanced_service()
+    items = service.get_research_reports(code=code, limit=limit)
     return ok(data=as_dict_list(items))
 
 
