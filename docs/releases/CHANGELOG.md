@@ -4,6 +4,13 @@
 
 ## 📝 最新更新 (2026-05-13)
 
+#### 🧪 A-Stock Enhanced PoC 补全与验证
+
+- **PoC 模块补全**: 新增 `ResearchReportsProvider`（研报数据获取）、`ResearchReportItem` 模型、`research_reports_enabled` 配置、`get_research_reports()` 服务方法、`/api/debug/a-stock-enhanced/research-reports/{code}` Debug 路由
+- **PoC 验证脚本**: 新增 `scripts/poc_verify.py`，支持 Quote、Kline、Finance、Announcements、Research Reports 五项端点测试，输出 JSON 结果文件
+- **PoC 验证结果**: 5/5 全部通过（mootdx 安装后），覆盖腾讯财经实时估值、mootdx K线/财务、akshare 公告/研报
+- **mootdx 集成**: 安装 `mootdx` 模块后，Kline 和 Finance Snapshot 端点恢复正常
+
 #### 🔁 报告名称显示复发补齐
 - **定位结论澄清**: 本次复发不是旧修复失效，而是 `analysis` 任务状态/结果接口没有接入 `stock_name` 返回
 - **结果接口补齐名称**: `app/routers/analysis.py` 在内存恢复、MongoDB 恢复和 `analysis_tasks` 兜底路径中统一补回 `stock_name`
