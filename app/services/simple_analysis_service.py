@@ -4,6 +4,7 @@
 """
 
 import asyncio
+import os
 import uuid
 import logging
 import re
@@ -1606,9 +1607,14 @@ class SimpleAnalysisService:
                 except Exception as e:
                     logger.warning(f"⚠️ 进度模拟失败: {e}")
 
-            # 启动进度模拟线程
-            progress_thread = threading.Thread(target=simulate_progress, daemon=True)
-            progress_thread.start()
+            # 默认关闭模拟进度，避免在真实图执行仍停留在前序节点时，
+            # 把前端状态提前推到研究团队阶段，造成“卡在看涨研究员”的错觉。
+            if os.getenv("TA_ENABLE_SIMULATED_PROGRESS", "false").lower() == "true":
+                progress_thread = threading.Thread(target=simulate_progress, daemon=True)
+                progress_thread.start()
+                logger.info("📊 已启用模拟进度线程（TA_ENABLE_SIMULATED_PROGRESS=true）")
+            else:
+                logger.info("📊 已禁用模拟进度线程，使用真实图执行进度")
 
             # 定义进度回调函数，用于接收 LangGraph 的实时进度
             # 节点进度映射表（与 RedisProgressTracker 的步骤权重对应）
