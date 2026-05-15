@@ -13,7 +13,7 @@ import logging
 import os
 import tempfile
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 logger = logging.getLogger(__name__)
 
@@ -73,27 +73,94 @@ class ReportExporter:
         logger.info(f"  - export_available: {self.export_available}")
         logger.info(f"  - pandoc_available: {self.pandoc_available}")
         logger.info(f"  - pdfkit_available: {self.pdfkit_available}")
+
+    def _build_stock_display_name(self, report_doc: Dict[str, Any]) -> str:
+        stock_symbol = report_doc.get("stock_symbol", "unknown")
+        stock_name = report_doc.get("stock_name", "")
+        if stock_name and stock_name != stock_symbol:
+            return f"{stock_name} ({stock_symbol})"
+        return stock_symbol
+
+    def _get_module_order(self) -> List[str]:
+        return [
+            "investment_recommendation",
+            "final_trade_decision",
+            "trader_investment_plan",
+            "market_report",
+            "a_share_sentiment_report",
+            "fund_flow_report",
+            "theme_rotation_report",
+            "institutional_theme_report",
+            "fundamentals_report",
+            "sentiment_report",
+            "news_report",
+            "bull_researcher",
+            "bear_researcher",
+            "research_team_decision",
+            "risky_analyst",
+            "safe_analyst",
+            "neutral_analyst",
+            "risk_management_decision",
+            "company_overview",
+            "financial_analysis",
+            "technical_analysis",
+            "market_analysis",
+            "risk_analysis",
+            "valuation_analysis",
+        ]
+
+    def _get_module_titles(self) -> Dict[str, str]:
+        return {
+            "investment_recommendation": "🎯 投资建议",
+            "final_trade_decision": "🧾 最终交易决策",
+            "trader_investment_plan": "🗂️ 交易计划",
+            "market_report": "🌍 市场研判",
+            "a_share_sentiment_report": "🇨🇳 A股情绪分析",
+            "fund_flow_report": "💸 资金流向分析",
+            "theme_rotation_report": "🔄 题材轮动分析",
+            "institutional_theme_report": "🏦 机构主题跟踪",
+            "fundamentals_report": "📊 基本面分析",
+            "sentiment_report": "🧠 市场情绪报告",
+            "news_report": "📰 新闻事件分析",
+            "bull_researcher": "🐂 看多观点",
+            "bear_researcher": "🐻 看空观点",
+            "research_team_decision": "⚖️ 研究团队结论",
+            "risky_analyst": "🔥 激进风控观点",
+            "safe_analyst": "🛡️ 保守风控观点",
+            "neutral_analyst": "⚪ 中性风控观点",
+            "risk_management_decision": "🚦 风险管理结论",
+            "company_overview": "🏢 公司概况",
+            "financial_analysis": "💰 财务分析",
+            "technical_analysis": "📈 技术分析",
+            "market_analysis": "🌍 市场分析",
+            "risk_analysis": "⚠️ 风险分析",
+            "valuation_analysis": "💎 估值分析",
+        }
     
     def generate_markdown_report(self, report_doc: Dict[str, Any]) -> str:
         """生成 Markdown 格式报告"""
         logger.info("📝 生成 Markdown 报告...")
         
-        stock_symbol = report_doc.get("stock_symbol", "unknown")
+        stock_display_name = self._build_stock_display_name(report_doc)
         analysis_date = report_doc.get("analysis_date", "")
         analysts = report_doc.get("analysts", [])
         research_depth = report_doc.get("research_depth", 1)
         reports = report_doc.get("reports", {})
         summary = report_doc.get("summary", "")
+        recommendation = report_doc.get("recommendation", "")
         
         content_parts = []
         
         # 标题和元信息
-        content_parts.append(f"# {stock_symbol} 股票分析报告")
+        content_parts.append(f"# {stock_display_name} 股票分析报告")
         content_parts.append("")
-        content_parts.append(f"**分析日期**: {analysis_date}")
+        content_parts.append("## 报告概览")
+        content_parts.append("")
+        content_parts.append(f"- 分析对象：{stock_display_name}")
+        content_parts.append(f"- 分析日期：{analysis_date}")
         if analysts:
-            content_parts.append(f"**分析师**: {', '.join(analysts)}")
-        content_parts.append(f"**研究深度**: {research_depth}")
+            content_parts.append(f"- 分析师：{', '.join(analysts)}")
+        content_parts.append(f"- 研究深度：{research_depth}")
         content_parts.append("")
         content_parts.append("---")
         content_parts.append("")
@@ -106,27 +173,19 @@ class ReportExporter:
             content_parts.append("")
             content_parts.append("---")
             content_parts.append("")
+
+        # 最终建议
+        if recommendation:
+            content_parts.append("## 🎯 最终建议")
+            content_parts.append("")
+            content_parts.append(recommendation)
+            content_parts.append("")
+            content_parts.append("---")
+            content_parts.append("")
         
         # 各模块内容
-        module_order = [
-            "company_overview",
-            "financial_analysis", 
-            "technical_analysis",
-            "market_analysis",
-            "risk_analysis",
-            "valuation_analysis",
-            "investment_recommendation"
-        ]
-        
-        module_titles = {
-            "company_overview": "🏢 公司概况",
-            "financial_analysis": "💰 财务分析",
-            "technical_analysis": "📈 技术分析",
-            "market_analysis": "🌍 市场分析",
-            "risk_analysis": "⚠️ 风险分析",
-            "valuation_analysis": "💎 估值分析",
-            "investment_recommendation": "🎯 投资建议"
-        }
+        module_order = self._get_module_order()
+        module_titles = self._get_module_titles()
         
         # 按顺序添加模块
         for module_key in module_order:
@@ -145,7 +204,8 @@ class ReportExporter:
         for module_key, module_content in reports.items():
             if module_key not in module_order:
                 if isinstance(module_content, str) and module_content.strip():
-                    content_parts.append(f"## {module_key}")
+                    title = module_titles.get(module_key, module_key)
+                    content_parts.append(f"## {title}")
                     content_parts.append("")
                     content_parts.append(module_content)
                     content_parts.append("")
@@ -665,4 +725,3 @@ pre, code {
 
 # 创建全局导出器实例
 report_exporter = ReportExporter()
-

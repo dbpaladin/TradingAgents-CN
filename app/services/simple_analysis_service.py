@@ -868,6 +868,152 @@ class SimpleAnalysisService:
             return "持有"
         return None
 
+    def _get_risk_level_label(self, risk_score: Any) -> str:
+        """将风险分数映射为中文风险等级。"""
+        score = self._normalize_probability_score(risk_score, default=0.3)
+        if score >= 0.7:
+            return "高"
+        if score >= 0.4:
+            return "中"
+        return "低"
+
+    def _build_position_guidance(self, action: str, risk_score: Any, confidence: Any) -> Dict[str, str]:
+        """构造面向持仓者的平仓/减仓/加仓/持有策略参考。"""
+        normalized_action = self._normalize_action(action) or "持有"
+        normalized_risk = self._normalize_probability_score(risk_score, default=0.3)
+        normalized_confidence = self._normalize_probability_score(confidence, default=0.5)
+
+        if normalized_action == "卖出":
+            final_advice = "以风险收缩为主，优先考虑平仓，其次是反弹过程中的分批减仓。"
+            close_strategy = "若基本面逻辑被证伪、跌破关键支撑位，或短期风险事件已触发，优先执行分批平仓，避免被动深套。"
+            reduce_strategy = "若暂未出现流动性风险，但波动和回撤明显放大，可先减仓到可承受仓位，等待趋势重新企稳。"
+            add_strategy = "不建议逆势加仓；只有在风险出清、趋势重新站稳且成交量恢复后，才考虑小仓位试探。"
+            hold_strategy = "仅适合已有较厚安全垫、且能接受较大波动的持仓者短线观察；若继续走弱，应迅速切回减仓或平仓方案。"
+        elif normalized_action == "买入":
+            final_advice = "以顺势布局为主，优先考虑分批加仓或新开仓，但不要一次性重仓。"
+            close_strategy = "若买入后快速跌破止损位、核心催化落空，或市场风格突变，应放弃幻想并及时平仓止损。"
+            reduce_strategy = "若短期冲高后量价背离、接近阶段目标位，或组合仓位已偏重，可先兑现一部分利润、控制回撤。"
+            add_strategy = "更适合采用分批加仓策略：回踩关键均线不破、基本面验证继续强化、板块资金持续流入时逐步提升仓位。"
+            hold_strategy = "已有持仓者可继续持有并跟踪成交量、业绩兑现和板块强度；若趋势延续，可由持有转为小幅加仓。"
+        else:
+            final_advice = "以持有观察为主，暂不宜激进操作，等待更明确的趋势或催化再决定加减仓。"
+            close_strategy = "若后续跌破中期支撑、基本面明显恶化，或外部风险超预期，应从观望切换到平仓方案。"
+            reduce_strategy = "若股价接近压力位却迟迟不能突破，或波动率持续抬升，可小幅减仓降低组合风险。"
+            add_strategy = "只有在放量突破关键压力位、业绩或政策催化进一步确认后，才建议考虑试探性加仓。"
+            hold_strategy = "当前更适合保留核心仓位、边走边看，重点观察趋势确认、量能变化与市场情绪改善情况。"
+
+        if normalized_risk >= 0.7:
+            final_advice += " 当前风险偏高，执行上宜更保守。"
+            reduce_strategy += " 仓位控制应更坚决，避免情绪化补仓。"
+        elif normalized_confidence >= 0.75 and normalized_risk <= 0.35:
+            add_strategy += " 当前信号一致性较好，但仍建议保留分批节奏。"
+
+        return {
+            "final_advice": final_advice,
+            "close_strategy": close_strategy,
+            "reduce_strategy": reduce_strategy,
+            "add_strategy": add_strategy,
+            "hold_strategy": hold_strategy,
+        }
+
+    def _build_recommendation_text(
+        self,
+        decision: Dict[str, Any],
+        reports: Optional[Dict[str, Any]] = None
+    ) -> Tuple[str, str]:
+        """生成面向页面和报告导出的投资建议文本。"""
+        if not isinstance(decision, dict):
+            decision = {}
+        if not isinstance(reports, dict):
+            reports = {}
+
+        action = self._normalize_action(decision.get("action")) or "持有"
+        confidence_text = self._format_probability_percent(decision.get("confidence", 0.5), default=0.5)
+        risk_score = decision.get("risk_score", 0.3)
+        risk_text = self._format_probability_percent(risk_score, default=0.3)
+        risk_level = self._get_risk_level_label(risk_score)
+        current_price = decision.get("current_price")
+        target_price = decision.get("target_price")
+        execution_advice = str(decision.get("execution_advice", "") or "").strip()
+        reasoning = str(decision.get("reasoning", "") or "").strip()
+        consistency_note = str(decision.get("consistency_note", "") or "").strip()
+
+        guidance = self._build_position_guidance(action, risk_score, decision.get("confidence", 0.5))
+
+        base_lines = [
+            f"最终建议：{action}",
+            f"参考结论：{guidance['final_advice']}",
+            f"持仓者策略参考：平仓看风险兑现，减仓看压力位与波动率，加仓看趋势确认与资金回流，持有看逻辑是否持续验证。",
+            f"平仓策略：{guidance['close_strategy']}",
+            f"减仓策略：{guidance['reduce_strategy']}",
+            f"加仓策略：{guidance['add_strategy']}",
+            f"持有策略：{guidance['hold_strategy']}",
+            f"置信度：{confidence_text}",
+            f"风险等级：{risk_level}（风险评分 {risk_text}）",
+        ]
+
+        if current_price not in (None, ""):
+            base_lines.append(f"当前价格：{current_price}元")
+        if target_price not in (None, ""):
+            base_lines.append(f"目标价格：{target_price}元")
+        if execution_advice:
+            base_lines.append(f"执行建议：{execution_advice}")
+        if reasoning:
+            base_lines.append(f"核心依据：{reasoning}")
+        if consistency_note:
+            base_lines.append(f"一致性修正：{consistency_note}")
+
+        recommendation_text = "\n".join(base_lines)
+
+        markdown_lines = [
+            "### 最终建议",
+            "",
+            f"- 方向判断：**{action}**",
+            f"- 参考结论：{guidance['final_advice']}",
+            f"- 置信度：{confidence_text}",
+            f"- 风险等级：{risk_level}（风险评分 {risk_text}）",
+        ]
+        if current_price not in (None, ""):
+            markdown_lines.append(f"- 当前价格：{current_price}元")
+        if target_price not in (None, ""):
+            markdown_lines.append(f"- 目标价格：{target_price}元")
+        if execution_advice:
+            markdown_lines.append(f"- 执行建议：{execution_advice}")
+        if consistency_note:
+            markdown_lines.append(f"- 一致性修正：{consistency_note}")
+
+        markdown_lines.extend([
+            "",
+            "### 持仓者策略参考",
+            "",
+            f"#### 平仓策略\n{guidance['close_strategy']}",
+            "",
+            f"#### 减仓策略\n{guidance['reduce_strategy']}",
+            "",
+            f"#### 加仓策略\n{guidance['add_strategy']}",
+            "",
+            f"#### 持有策略\n{guidance['hold_strategy']}",
+        ])
+
+        if reasoning:
+            markdown_lines.extend([
+                "",
+                "### 核心依据",
+                "",
+                reasoning,
+            ])
+
+        final_decision_report = reports.get("final_trade_decision")
+        if isinstance(final_decision_report, str) and final_decision_report.strip():
+            markdown_lines.extend([
+                "",
+                "### 决策原文摘录",
+                "",
+                final_decision_report.strip(),
+            ])
+
+        return recommendation_text, "\n".join(markdown_lines)
+
     def _reconcile_report_actions(
         self,
         reports: Dict[str, Any],
@@ -2001,24 +2147,13 @@ class SimpleAnalysisService:
                         summary += "..."
                     logger.info(f"📝 [SUMMARY] 从state.final_trade_decision提取摘要: {len(summary)}字符")
 
-            # 3. 生成recommendation（从decision的reasoning）
+            # 3. 生成recommendation（增强为持仓者视角的结构化建议）
             if isinstance(formatted_decision, dict):
-                action = formatted_decision.get('action', '持有')
-                execution_advice = formatted_decision.get('execution_advice', '')
-                target_price = formatted_decision.get('target_price')
-                reasoning = formatted_decision.get('reasoning', '')
-                consistency_note = formatted_decision.get('consistency_note', '')
-
-                # 生成投资建议
-                recommendation = f"方向判断：{action}。"
-                if execution_advice:
-                    recommendation += f"执行建议：{execution_advice}。"
-                if target_price:
-                    recommendation += f"目标价格：{target_price}元。"
-                if reasoning:
-                    recommendation += f"决策依据：{reasoning}"
-                if consistency_note:
-                    recommendation += f"一致性修正：{consistency_note}"
+                recommendation, recommendation_report = self._build_recommendation_text(
+                    formatted_decision,
+                    reports
+                )
+                reports["investment_recommendation"] = recommendation_report
                 logger.info(f"💡 [RECOMMENDATION] 生成投资建议: {len(recommendation)}字符")
 
             # 4. 如果还是没有，从其他报告中提取
