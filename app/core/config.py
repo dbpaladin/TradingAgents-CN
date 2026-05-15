@@ -182,6 +182,21 @@ class Settings(BaseSettings):
         description="自动检测Tushare rt_k接口权限，付费用户自动切换到高频模式（5秒）"
     )
 
+    # A-share enhanced sidecar PoC（默认关闭，不接入生产主链路）
+    A_STOCK_ENHANCED_ENABLED: bool = Field(default=False, description="启用A股增强数据模块（独立模块开关）")
+    A_STOCK_ENHANCED_INTEGRATION_ENABLED: bool = Field(
+        default=False,
+        description="将A股增强数据接入主分析流程（生产接入开关，默认关闭）",
+    )
+    A_STOCK_TENCENT_QUOTES_ENABLED: bool = Field(default=True, description="启用腾讯行情子模块")
+    A_STOCK_MOOTDX_ENABLED: bool = Field(default=True, description="启用mootdx子模块")
+    A_STOCK_NORTHBOUND_ENABLED: bool = Field(default=True, description="启用北向资金子模块")
+    A_STOCK_ANNOUNCEMENTS_ENABLED: bool = Field(default=True, description="启用公告子模块")
+    A_STOCK_RESEARCH_REPORTS_ENABLED: bool = Field(default=True, description="启用研报子模块")
+    A_STOCK_QUOTE_TTL_SECONDS: int = Field(default=15, ge=1, le=3600, description="A股增强行情缓存秒数")
+    A_STOCK_NORTHBOUND_TTL_SECONDS: int = Field(default=30, ge=1, le=3600, description="北向资金缓存秒数")
+    A_STOCK_REQUEST_TIMEOUT_SECONDS: int = Field(default=8, ge=1, le=120, description="A股增强请求超时秒数")
+
     # Tushare基础配置
     TUSHARE_TOKEN: str = Field(default="", description="Tushare API Token")
     TUSHARE_ENABLED: bool = Field(default=True, description="启用Tushare数据源")
