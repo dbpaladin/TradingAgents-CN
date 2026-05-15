@@ -1,0 +1,13 @@
+[Unit]
+Description=TradingAgents A-Stock Gray Check
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=REPLACE_USER
+WorkingDirectory=REPLACE_REPO_ROOT
+Environment=A_STOCK_GRAY_CHECK_HOURS=24
+Environment=A_STOCK_GRAY_FINANCE_MIN_RATIO=90
+Environment=A_STOCK_GRAY_NORTHBOUND_MIN_RATIO=90
+ExecStart=/usr/bin/env bash REPLACE_REPO_ROOT/scripts/check_a_stock_gray.sh

@@ -192,6 +192,7 @@ class GraphSetup:
         bear_researcher_node = create_bear_researcher(
             self.quick_thinking_llm, self.bear_memory
         )
+        quality_gate_node = create_quality_gate()
         research_manager_node = create_research_manager(
             self.deep_thinking_llm, self.invest_judge_memory
         )
@@ -219,6 +220,7 @@ class GraphSetup:
         # Add other nodes
         workflow.add_node("Bull Researcher", bull_researcher_node)
         workflow.add_node("Bear Researcher", bear_researcher_node)
+        workflow.add_node("Quality Gate", quality_gate_node)
         workflow.add_node("Research Manager", research_manager_node)
         workflow.add_node("Trader", trader_node)
         workflow.add_node("Risky Analyst", risky_analyst)
@@ -249,7 +251,9 @@ class GraphSetup:
                 next_analyst = f"{selected_analysts[i + 1].capitalize()} Analyst"
                 workflow.add_edge(current_clear, next_analyst)
             else:
-                workflow.add_edge(current_clear, "Bull Researcher")
+                workflow.add_edge(current_clear, "Quality Gate")
+
+        workflow.add_edge("Quality Gate", "Bull Researcher")
 
         # Add remaining edges
         workflow.add_conditional_edges(
