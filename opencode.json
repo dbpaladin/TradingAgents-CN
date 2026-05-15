@@ -1,0 +1,17 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "my-vllm": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Qwen 远程模型",
+      "options": {
+        "baseURL": "http://10.10.30.9:80/v1"
+      },
+      "models": {
+        "qwen36-27b": {
+          "name": "qwen36-27b"
+        }
+      }
+    }
+  }
+}
