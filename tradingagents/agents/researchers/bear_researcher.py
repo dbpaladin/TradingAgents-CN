@@ -20,6 +20,7 @@ def create_bear_researcher(llm, memory):
         fund_flow_report = state.get("fund_flow_report", "")
         theme_rotation_report = state.get("theme_rotation_report", "")
         institutional_theme_report = state.get("institutional_theme_report", "")
+        data_quality_summary = state.get("data_quality_summary", "")
         sentiment_report = state["sentiment_report"]
         news_report = state["news_report"]
         fundamentals_report = state["fundamentals_report"]
@@ -86,6 +87,7 @@ def create_bear_researcher(llm, memory):
         sentiment_report = compact_text(sentiment_report, 500, "bear.sentiment")
         news_report = compact_text(news_report, 600, "bear.news")
         fundamentals_report = compact_text(fundamentals_report, 1000, "bear.fundamentals")
+        data_quality_summary = compact_text(data_quality_summary, 500, "bear.data_quality")
         history = compact_history(history, 700, "bear.history")
         current_response = compact_text(current_response, 500, "bear.current_response")
 
@@ -125,6 +127,7 @@ A股题材轮动报告：{theme_rotation_report}
 辩论对话历史：{history}
 最后的看涨论点：{current_response}
 类似情况的反思和经验教训：{past_memory_str}
+数据质量门控摘要：{data_quality_summary}
 
 请使用这些信息提供令人信服的看跌论点，反驳看涨声明，并参与动态辩论，展示投资该股票的风险和弱点。你还必须处理反思并从过去的经验教训和错误中学习。
 

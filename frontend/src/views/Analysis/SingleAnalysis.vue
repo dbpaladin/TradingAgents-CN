@@ -733,6 +733,7 @@ import { marked } from 'marked'
 import { recommendModels, validateModels, type ModelRecommendationResponse } from '@/api/modelCapabilities'
 import { validateStockCode, getStockCodeFormatHelp, getStockCodeExamples } from '@/utils/stockValidator'
 import { normalizeMarketForAnalysis, getMarketByStockCode } from '@/utils/market'
+import { normalizeReportTabs } from '@/utils/reportTabs'
 
 // 配置marked选项
 marked.setOptions({
@@ -1327,7 +1328,6 @@ const getActionTagType = (action: string): 'primary' | 'success' | 'warning' | '
 // 获取分析报告
 const getAnalysisReports = (data: any) => {
   console.log('📊 getAnalysisReports 输入数据:', data)
-  const reports: Array<{title: string, content: any}> = []
 
   // 优先从 reports 字段获取数据（新的API格式）
   let reportsData = data
@@ -1339,54 +1339,13 @@ const getAnalysisReports = (data: any) => {
     console.log('📊 使用 data.state:', reportsData)
   } else {
     console.log('📊 没有找到有效的报告数据')
-    return reports
+    return []
   }
 
-  // 定义报告映射（按照完整的分析流程顺序）
-  const reportMappings = [
-    // 分析师团队
-    { key: 'market_report', title: '📈 市场技术分析', category: '分析师团队' },
-    { key: 'a_share_sentiment_report', title: '🔥 A股盘面情绪', category: '分析师团队' },
-    { key: 'fund_flow_report', title: '💸 A股资金面', category: '分析师团队' },
-    { key: 'theme_rotation_report', title: '🧭 A股题材轮动', category: '分析师团队' },
-    { key: 'institutional_theme_report', title: '🏦 机构布局题材', category: '分析师团队' },
-    { key: 'sentiment_report', title: '💬 公共舆情分析', category: '分析师团队' },
-    { key: 'news_report', title: '📰 新闻事件分析', category: '分析师团队' },
-    { key: 'fundamentals_report', title: '💰 基本面分析', category: '分析师团队' },
+  const reports = normalizeReportTabs(reportsData)
 
-    // 研究团队 (3个)
-    { key: 'bull_researcher', title: '🐂 多头研究员', category: '研究团队' },
-    { key: 'bear_researcher', title: '🐻 空头研究员', category: '研究团队' },
-    { key: 'research_team_decision', title: '🔬 研究经理决策', category: '研究团队' },
-
-    // 交易团队 (1个)
-    { key: 'trader_investment_plan', title: '💼 交易员计划', category: '交易团队' },
-
-    // 风险管理团队 (4个)
-    { key: 'risky_analyst', title: '⚡ 激进分析师', category: '风险管理团队' },
-    { key: 'safe_analyst', title: '🛡️ 保守分析师', category: '风险管理团队' },
-    { key: 'neutral_analyst', title: '⚖️ 中性分析师', category: '风险管理团队' },
-    { key: 'risk_management_decision', title: '👔 投资组合经理', category: '风险管理团队' },
-
-    // 最终决策 (1个)
-    { key: 'final_trade_decision', title: '🎯 最终交易决策', category: '最终决策' },
-
-    // 兼容旧格式
-    { key: 'investment_plan', title: '📋 投资建议', category: '其他' },
-    { key: 'investment_debate_state', title: '🔬 研究团队决策（旧）', category: '其他' },
-    { key: 'risk_debate_state', title: '⚖️ 风险管理团队（旧）', category: '其他' }
-  ]
-
-  // 遍历所有可能的报告
-  reportMappings.forEach(mapping => {
-    const content = reportsData[mapping.key]
-    if (content) {
-      console.log(`📊 找到报告: ${mapping.key} -> ${mapping.title}`)
-      reports.push({
-        title: mapping.title,
-        content: content
-      })
-    }
+  reports.forEach(reportItem => {
+    console.log(`📊 找到报告: ${reportItem.key} -> ${reportItem.title}`)
   })
 
   console.log(`📊 总共找到 ${reports.length} 个报告`)
@@ -1403,14 +1362,24 @@ const getAnalysisReports = (data: any) => {
 const getReportIcon = (title: string) => {
   const iconMap: Record<string, string> = {
     '📈 市场技术分析': '📈',
+    '🔥 A股盘面情绪': '🔥',
+    '💸 A股资金面': '💸',
+    '🧭 A股题材轮动': '🧭',
+    '🏦 机构布局题材': '🏦',
     '💰 基本面分析': '💰',
+    '💬 公共舆情分析': '💬',
     '📰 新闻事件分析': '📰',
-    '💭 市场情绪分析': '💭',
+    '🐂 多头研究员': '🐂',
+    '🐻 空头研究员': '🐻',
+    '🔬 研究经理决策': '🔬',
+    '💼 交易员计划': '💼',
+    '⚡ 激进分析师': '⚡',
+    '🛡️ 保守分析师': '🛡️',
+    '⚖️ 中性分析师': '⚖️',
+    '👔 投资组合经理': '👔',
     '📋 投资建议': '📋',
-    '🔬 研究团队决策': '🔬',
-    '💼 交易团队计划': '💼',
-    '⚖️ 风险管理团队': '⚖️',
-    '🎯 最终交易决策': '🎯'
+    '🎯 最终交易决策': '🎯',
+    '🎯 最终交易决策-投资组合经理': '🎯'
   }
   return iconMap[title] || '📊'
 }
@@ -1424,14 +1393,24 @@ const getReportName = (title: string) => {
 const getReportDescription = (title: string) => {
   const descMap: Record<string, string> = {
     '📈 市场技术分析': '技术指标、价格趋势、支撑阻力位分析',
+    '🔥 A股盘面情绪': '涨停梯队、赚钱效应与市场短线情绪分析',
+    '💸 A股资金面': '主力资金、北向资金与成交结构分析',
+    '🧭 A股题材轮动': '热点主线、题材切换与风格偏好分析',
+    '🏦 机构布局题材': '机构关注方向与题材布局线索分析',
     '💰 基本面分析': '财务数据、估值水平、盈利能力分析',
+    '💬 公共舆情分析': '投资者情绪、社交舆情与市场讨论热度分析',
     '📰 新闻事件分析': '相关新闻事件、市场动态影响分析',
-    '💭 市场情绪分析': '投资者情绪、社交媒体情绪指标',
+    '🐂 多头研究员': '看多逻辑、催化因素与上行动能分析',
+    '🐻 空头研究员': '风险因素、反方观点与下行压力分析',
+    '🔬 研究经理决策': '多空观点整合后的研究结论',
+    '💼 交易员计划': '专业交易员制定的具体交易执行计划',
+    '⚡ 激进分析师': '偏进攻视角下的收益与风险权衡',
+    '🛡️ 保守分析师': '偏防守视角下的风险边界与回撤控制',
+    '⚖️ 中性分析师': '平衡视角下的中性风险评估',
+    '👔 投资组合经理': '综合风险团队意见后的仓位与风控决策',
     '📋 投资建议': '具体投资策略、仓位管理建议',
-    '🔬 研究团队决策': '多头/空头研究员辩论分析，研究经理综合决策',
-    '💼 交易团队计划': '专业交易员制定的具体交易执行计划',
-    '⚖️ 风险管理团队': '激进/保守/中性分析师风险评估，投资组合经理最终决策',
-    '🎯 最终交易决策': '综合所有团队分析后的最终投资决策'
+    '🎯 最终交易决策': '综合所有团队分析后的最终投资决策',
+    '🎯 最终交易决策-投资组合经理': '风险经理作为投资组合经理给出的最终裁决与风控结论'
   }
   return descMap[title] || '详细分析报告'
 }
@@ -1522,11 +1501,15 @@ const downloadReport = async (format: string = 'markdown') => {
       analysisResults.value?.stock_symbol ||
       analysisResults.value?.symbol ||
       'stock'
+    const stockLabel = getStockDisplayLabel(
+      analysisResults.value?.stock_name,
+      code
+    )
     const dateStr = analysisResults.value?.analysis_date || new Date().toISOString().slice(0, 10)
 
     // 根据格式设置文件扩展名
     const ext = getFileExtension(format)
-    a.download = `${String(code)}_分析报告_${String(dateStr).slice(0, 10)}.${ext}`
+    a.download = `${stockLabel}_分析报告_${String(dateStr).slice(0, 10)}.${ext}`
 
     document.body.appendChild(a)
     a.click()
@@ -1547,6 +1530,13 @@ const downloadReport = async (format: string = 'markdown') => {
       ElMessage.error(`下载报告失败: ${err.message || '未知错误'}`)
     }
   }
+}
+
+const getStockDisplayLabel = (stockName?: string, stockCode?: string) => {
+  const code = String(stockCode || 'stock').trim()
+  const name = String(stockName || '').trim()
+  if (!name || name === code) return code
+  return `${name}（${code}）`
 }
 
 // 辅助函数：获取格式名称

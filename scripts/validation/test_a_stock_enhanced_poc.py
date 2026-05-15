@@ -28,7 +28,6 @@ from app.services.a_stock_enhanced.models import (  # noqa: E402
 )
 from app.services.a_stock_enhanced.service import get_a_stock_enhanced_service  # noqa: E402
 
-
 def _install_offline_mocks(service) -> None:
     service.tencent.fetch_quotes = lambda codes: {
         "000001": EnhancedQuote(code="000001", name="PingAn", price=10.1, pre_close=9.9, source="mock_tencent")

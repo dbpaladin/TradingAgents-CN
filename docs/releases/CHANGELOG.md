@@ -2,6 +2,72 @@
 
 本文档记录了TradingAgents-CN项目的所有重要更改。
 
+## 📝 最新更新 (2026-05-15)
+
+#### 🧾 报告格式与持仓建议增强
+- **最终建议结构化**: `recommendation` 由单段方向判断升级为面向持仓者的完整结论，覆盖最终建议、平仓策略、减仓策略、加仓策略、持有策略、置信度、风险等级、目标价和执行建议
+- **风险语义补齐**: 根据 `confidence` 与 `risk_score` 自动生成更保守或更积极的仓位参考，降低“只有买卖方向、没有执行边界”的阅读落差
+- **报告模块复用**: 增强后的建议同步写入 `reports["investment_recommendation"]`，用于报告详情、Markdown 导出及后续 Word/PDF 转换
+- **导出结构整理**: Markdown 报告统一改为“报告概览 -> 执行摘要 -> 最终建议 -> 各分析模块”的顺序，模块名称统一为更易读的中文标题
+- **下载链路统一**: `/api/reports/{report_id}/download?format=markdown` 改为复用 `ReportExporter`，避免接口导出与系统导出出现两套格式
+
+## 📝 最新更新 (2026-05-15)
+
+#### 🔧 新闻分析师工具调用循环修复
+- **问题定位**: 002837 个股分析报告在新闻分析步骤上报错，显示"新闻分析流程达到工具调用上限"
+- **根因分析**: LLM返回工具调用时，原代码直接返回包含tool_calls的AIMessage导致工作流无限循环，计数器达到上限但`news_report`仍为空
+- **修复方案**: 当LLM返回工具调用时，直接调用新闻工具获取数据并生成分析报告，跳过工作流循环
+- **新增机制**: LLM未调用工具时，增加补救逻辑，强制获取新闻数据并生成报告
+- **影响范围**: `tradingagents/agents/analysts/news_analyst.py`
+- **文件备份**: `news_analyst.py.bak`
+
+## 📝 最新更新 (2026-05-13)
+
+#### 🧪 A-Stock Enhanced PoC 补全与验证
+
+- **PoC 模块补全**: 新增 `ResearchReportsProvider`（研报数据获取）、`ResearchReportItem` 模型、`research_reports_enabled` 配置、`get_research_reports()` 服务方法、`/api/debug/a-stock-enhanced/research-reports/{code}` Debug 路由
+- **PoC 验证脚本**: 新增 `scripts/poc_verify.py`，支持 Quote、Kline、Finance、Announcements、Research Reports 五项端点测试，输出 JSON 结果文件
+- **PoC 验证结果**: 5/5 全部通过（mootdx 安装后），覆盖腾讯财经实时估值、mootdx K线/财务、akshare 公告/研报
+- **mootdx 集成**: 安装 `mootdx` 模块后，Kline 和 Finance Snapshot 端点恢复正常
+
+#### 🔁 报告名称显示复发补齐
+- **定位结论澄清**: 本次复发不是旧修复失效，而是 `analysis` 任务状态/结果接口没有接入 `stock_name` 返回
+- **结果接口补齐名称**: `app/routers/analysis.py` 在内存恢复、MongoDB 恢复和 `analysis_tasks` 兜底路径中统一补回 `stock_name`
+- **多入口下载名统一**: 单股分析页、报告列表页、仪表盘下载文件名统一优先使用 `股票名称（股票代码）`
+
+#### 📚 文档与归档
+- **更新专项文档**: 在“报告股票名称展示统一修复”中补写本轮 follow-up
+- **新增会话归档**: 归档本轮复发定位、旁路修复和验证过程
+- **更新会话索引**: 同步纳入 `history_chat/SESSION_INDEX.md`
+
+## 📝 最新更新 (2026-05-13)
+
+#### 🔎 `a-stock-data` 数据源可行性研究
+- **形成正式评估文档**: 新增 `a-stock-data` 接入研究文档，明确其更适合定位为 A 股增强层，而不是直接替换现有 `Tushare / AKShare / BaoStock` 主数据源
+- **PoC 路径明确**: 产出接入优先级、字段确认项、实施阶段、风险清单与验收标准，便于下次直接进入开发
+- **关键能力结论落档**: 明确 `mootdx K线/F10/finance`、腾讯财经实时估值、同花顺北向分钟、东财研报、巨潮公告的适用范围
+
+#### 📚 文档与归档
+- **新增技术评估文档**: 补充 `docs/tech_reviews/2026-05-13-a-stock-data-feasibility-and-poc-plan.md`
+- **新增会话归档**: 归档本轮可行性研究、任务单整理和字段映射确认过程
+- **更新会话索引**: 同步纳入 `history_chat/SESSION_INDEX.md`
+
+## 📝 最新更新 (2026-05-10)
+
+#### 🏷️ 分析报告股票名称展示统一
+- **最终报告统一展示名**: 服务层、导出链路和下载接口统一使用 `股票名称（股票代码）` 作为报告标题与展示名
+- **正文补齐分析对象**: 分模块报告、新闻降级报告和最终决策报告在缺失名称时会自动补写 `分析对象：名称（代码）`
+- **下载文件名同步修复**: 报告详情页下载文件名改为优先使用 `股票名称（股票代码）_分析报告_日期`
+
+#### ✅ 回归验证补齐
+- **新增断言**: 回归测试增加对 `market_report`、`news_report`、`trader_investment_plan`、`final_trade_decision` 中股票名称展示的校验
+- **编译检查通过**: 关键 Python 文件已通过 `py_compile` 语法校验
+
+#### 📚 文档与归档
+- **新增修复说明**: 增补“报告股票名称展示统一修复”专项文档
+- **新增会话归档**: 归档本轮问题定位、修复和验证过程
+- **更新会话索引**: 同步纳入 `history_chat/SESSION_INDEX.md`
+
 ## 📝 最新更新 (2026-03-29)
 
 #### 🩹 单股分析并行消息污染修复

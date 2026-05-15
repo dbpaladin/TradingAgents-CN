@@ -25,6 +25,19 @@ from app.models.analysis import (
 router = APIRouter()
 logger = logging.getLogger("webapi")
 
+
+def _resolve_stock_name(stock_symbol: Optional[str], explicit_name: Optional[str] = None) -> str:
+    """为分析结果接口统一补齐股票名称。"""
+    if explicit_name and str(explicit_name).strip():
+        return str(explicit_name).strip()
+    if not stock_symbol:
+        return ""
+    try:
+        from app.routers.reports import get_stock_name
+        return get_stock_name(stock_symbol)
+    except Exception:
+        return str(stock_symbol)
+
 # 兼容性：保留原有的请求模型
 class SingleAnalyzeRequest(BaseModel):
     symbol: str
@@ -162,6 +175,7 @@ async def get_task_status_new(
                     "symbol": task_result.get("symbol") or task_result.get("stock_code"),
                     "stock_code": task_result.get("symbol") or task_result.get("stock_code"),  # 兼容字段
                     "stock_symbol": task_result.get("symbol") or task_result.get("stock_code"),
+                    "stock_name": task_result.get("stock_name") or "",
                     "source": "mongodb_tasks"  # 标记数据来源
                 }
 
@@ -198,6 +212,10 @@ async def get_task_status_new(
                     "estimated_total_time": elapsed_time,  # 已完成任务的总时长就是已用时间
                     "stock_code": mongo_result.get("stock_symbol"),
                     "stock_symbol": mongo_result.get("stock_symbol"),
+                    "stock_name": _resolve_stock_name(
+                        mongo_result.get("stock_symbol"),
+                        mongo_result.get("stock_name"),
+                    ),
                     "analysts": mongo_result.get("analysts", []),
                     "research_depth": mongo_result.get("research_depth", "快速"),
                     "source": "mongodb_reports"  # 标记数据来源
@@ -276,6 +294,10 @@ async def get_task_result(
                     "analysis_id": mongo_result.get("analysis_id"),
                     "stock_symbol": mongo_result.get("stock_symbol"),
                     "stock_code": mongo_result.get("stock_symbol"),  # 兼容性
+                    "stock_name": _resolve_stock_name(
+                        mongo_result.get("stock_symbol"),
+                        mongo_result.get("stock_name"),
+                    ),
                     "analysis_date": mongo_result.get("analysis_date"),
                     "summary": mongo_result.get("summary", ""),
                     "recommendation": mongo_result.get("recommendation", ""),
@@ -318,6 +340,7 @@ async def get_task_result(
                         "analysis_id": r.get("analysis_id"),
                         "stock_symbol": symbol,
                         "stock_code": symbol,  # 兼容字段
+                        "stock_name": _resolve_stock_name(symbol, r.get("stock_name")),
                         "analysis_date": r.get("analysis_date"),
                         "summary": r.get("summary", ""),
                         "recommendation": r.get("recommendation", ""),
@@ -650,6 +673,12 @@ async def get_task_result(
             "analysis_id": safe_string(result_data.get("analysis_id"), "unknown"),
             "stock_symbol": safe_string(result_data.get("stock_symbol"), "UNKNOWN"),
             "stock_code": safe_string(result_data.get("stock_code"), "UNKNOWN"),
+            "stock_name": safe_string(
+                result_data.get("stock_name"),
+                _resolve_stock_name(
+                    result_data.get("stock_symbol") or result_data.get("stock_code")
+                ),
+            ),
             "analysis_date": safe_string(result_data.get("analysis_date"), "2025-08-20"),
             "summary": safe_string(result_data.get("summary"), "分析摘要暂无"),
             "recommendation": safe_string(result_data.get("recommendation"), "投资建议暂无"),

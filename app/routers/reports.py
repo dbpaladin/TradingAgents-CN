@@ -98,6 +98,14 @@ def _build_report_query(report_id: str) -> Dict[str, Any]:
         pass
     return {"$or": ors}
 
+
+def _format_stock_display_name(stock_symbol: str, stock_name: Optional[str] = None) -> str:
+    """统一格式化股票展示名，优先输出“名称（代码）”"""
+    resolved_name = (stock_name or "").strip()
+    if not resolved_name or resolved_name == stock_symbol:
+        return stock_symbol
+    return f"{resolved_name}（{stock_symbol}）"
+
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
 class ReportFilter(BaseModel):
@@ -452,6 +460,8 @@ async def download_report(
             raise HTTPException(status_code=404, detail="报告不存在")
 
         stock_symbol = doc.get("stock_symbol", "unknown")
+        stock_name = doc.get("stock_name") or get_stock_name(stock_symbol)
+        stock_display_name = _format_stock_display_name(stock_symbol, stock_name)
         analysis_date = doc.get("analysis_date", datetime.now().strftime("%Y-%m-%d"))
 
         if format == "json":
@@ -472,30 +482,12 @@ async def download_report(
 
         elif format == "markdown":
             # Markdown格式下载
-            reports = doc.get("reports", {})
-            content_parts = []
+            from app.utils.report_exporter import report_exporter
 
-            # 添加标题
-            content_parts.append(f"# {stock_symbol} 分析报告")
-            content_parts.append(f"**分析日期**: {analysis_date}")
-            content_parts.append(f"**分析师**: {', '.join(doc.get('analysts', []))}")
-            content_parts.append(f"**研究深度**: {doc.get('research_depth', 1)}")
-            content_parts.append("")
-
-            # 添加摘要
-            if doc.get("summary"):
-                content_parts.append("## 执行摘要")
-                content_parts.append(doc["summary"])
-                content_parts.append("")
-
-            # 添加各模块内容
-            for module_name, module_content in reports.items():
-                if isinstance(module_content, str) and module_content.strip():
-                    content_parts.append(f"## {module_name}")
-                    content_parts.append(module_content)
-                    content_parts.append("")
-
-            content = "\n".join(content_parts)
+            export_doc = dict(doc)
+            export_doc["stock_name"] = stock_name
+            export_doc["stock_symbol"] = stock_symbol
+            content = report_exporter.generate_markdown_report(export_doc)
             filename = f"{stock_symbol}_{analysis_date}_report.md"
             media_type = "text/markdown"
 

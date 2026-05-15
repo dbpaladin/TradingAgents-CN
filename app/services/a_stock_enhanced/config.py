@@ -11,9 +11,14 @@ class AStockEnhancedConfig:
     integration_enabled: bool
     tencent_quotes_enabled: bool
     mootdx_enabled: bool
+    tushare_enabled: bool
     northbound_enabled: bool
     announcements_enabled: bool
     research_reports_enabled: bool
+    finance_source: str
+    northbound_source: str
+    finance_tushare_ratio: int
+    northbound_tushare_ratio: int
     quote_ttl_seconds: int
     northbound_ttl_seconds: int
     request_timeout_seconds: int
@@ -22,13 +27,22 @@ class AStockEnhancedConfig:
 def get_a_stock_enhanced_config() -> AStockEnhancedConfig:
     settings = get_settings()
     return AStockEnhancedConfig(
-        enabled=getattr(settings, "A_STOCK_ENHANCED_ENABLED", False),
+        enabled=getattr(
+            settings,
+            "A_STOCK_ENHANCED_ENABLED",
+            getattr(settings, "A_STOCK_DATA_ENABLED", False),
+        ),
         integration_enabled=getattr(settings, "A_STOCK_ENHANCED_INTEGRATION_ENABLED", False),
         tencent_quotes_enabled=getattr(settings, "A_STOCK_TENCENT_QUOTES_ENABLED", True),
         mootdx_enabled=getattr(settings, "A_STOCK_MOOTDX_ENABLED", True),
+        tushare_enabled=getattr(settings, "A_STOCK_TUSHARE_ENABLED", True),
         northbound_enabled=getattr(settings, "A_STOCK_NORTHBOUND_ENABLED", True),
         announcements_enabled=getattr(settings, "A_STOCK_ANNOUNCEMENTS_ENABLED", True),
         research_reports_enabled=getattr(settings, "A_STOCK_RESEARCH_REPORTS_ENABLED", True),
+        finance_source=(getattr(settings, "A_STOCK_FINANCE_SOURCE", "hybrid") or "hybrid").lower(),
+        northbound_source=(getattr(settings, "A_STOCK_NORTHBOUND_SOURCE", "hybrid") or "hybrid").lower(),
+        finance_tushare_ratio=int(getattr(settings, "A_STOCK_FINANCE_TUSHARE_RATIO", 100)),
+        northbound_tushare_ratio=int(getattr(settings, "A_STOCK_NORTHBOUND_TUSHARE_RATIO", 100)),
         quote_ttl_seconds=getattr(settings, "A_STOCK_QUOTE_TTL_SECONDS", 15),
         northbound_ttl_seconds=getattr(settings, "A_STOCK_NORTHBOUND_TTL_SECONDS", 30),
         request_timeout_seconds=getattr(settings, "A_STOCK_REQUEST_TIMEOUT_SECONDS", 8),

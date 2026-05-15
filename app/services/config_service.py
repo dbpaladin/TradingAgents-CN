@@ -980,7 +980,7 @@ class ConfigService:
                         "details": None
                     }
 
-            # 2. 验证 API Key
+            # 2. 获取 API Key（允许无 Key 测试本地/免鉴权服务）
             api_key = None
             if llm_config.api_key:
                 api_key = llm_config.api_key
@@ -995,13 +995,16 @@ class ConfigService:
                     if api_key:
                         logger.info(f"✅ 从环境变量获取到API密钥")
 
+            # 允许匿名测试：本地厂家名、本地地址、或 extra_config 标记免鉴权
+            allow_anonymous = self._provider_allows_anonymous_access(provider_data or {})
             if not api_key or not self._is_valid_api_key(api_key):
-                return {
-                    "success": False,
-                    "message": f"{provider_str} 未配置有效的API密钥",
-                    "response_time": time.time() - start_time,
-                    "details": None
-                }
+                if allow_anonymous:
+                    api_key = ""
+                    logger.info(f"ℹ️ {provider_str} 允许无 API Key 测试，按匿名模式继续")
+                else:
+                    # 非本地厂家也不提前失败，先尝试匿名连通性，再由接口返回真实鉴权错误
+                    api_key = ""
+                    logger.info(f"⚠️ {provider_str} 未配置有效 API Key，先按匿名模式测试连接")
 
             # 3. 根据厂家类型选择测试方法
             if provider_str == "google":
@@ -1042,10 +1045,9 @@ class ConfigService:
 
                 url = f"{api_base_normalized}/chat/completions"
 
-                headers = {
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {api_key}"
-                }
+                headers = {"Content-Type": "application/json"}
+                if api_key:
+                    headers["Authorization"] = f"Bearer {api_key}"
 
                 data = {
                     "model": llm_config.model_name,
@@ -3338,6 +3340,37 @@ class ConfigService:
                 "message": "环境变量迁移失败"
             }
 
+    def _provider_allows_anonymous_access(self, provider_data: dict) -> bool:
+        """判断厂家是否允许无 API Key 访问（本地模型/免鉴权网关）"""
+        provider_name = (provider_data.get("name") or "").lower()
+        if provider_name in {"local", "ollama", "lmstudio", "vllm"}:
+            return True
+
+        # 本地服务地址默认允许匿名访问（如本机部署的 OpenAI 兼容网关）
+        base_url = str(provider_data.get("default_base_url") or "").strip().lower()
+        if base_url:
+            from urllib.parse import urlparse
+            try:
+                host = (urlparse(base_url).hostname or "").lower()
+            except Exception:
+                host = ""
+            if host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"}:
+                return True
+
+        extra_config = provider_data.get("extra_config") or {}
+        auth_type = str(extra_config.get("auth_type", "")).lower()
+        requires_api_key = extra_config.get("requires_api_key")
+        no_auth = extra_config.get("no_auth")
+
+        if auth_type in {"none", "noauth", "local"}:
+            return True
+        if requires_api_key is False:
+            return True
+        if no_auth is True:
+            return True
+
+        return False
+
     async def test_provider_api(self, provider_id: str) -> dict:
         """测试厂家API密钥"""
         try:
@@ -3369,7 +3402,9 @@ class ConfigService:
             api_key = provider_data.get("api_key")
             display_name = provider_data.get("display_name", provider_name)
 
-            # 🔥 判断数据库中的 API Key 是否有效
+            allow_anonymous = self._provider_allows_anonymous_access(provider_data)
+
+            # 🔥 API Key 缺失时不提前失败：先尝试匿名测试，再由真实接口返回鉴权结果
             if not self._is_valid_api_key(api_key):
                 # 数据库中的 Key 无效，尝试从环境变量读取
                 env_api_key = self._get_env_api_key(provider_name)
@@ -3377,10 +3412,11 @@ class ConfigService:
                     api_key = env_api_key
                     print(f"✅ 数据库配置无效，从环境变量读取到 {display_name} 的 API Key")
                 else:
-                    return {
-                        "success": False,
-                        "message": f"{display_name} 未配置有效的API密钥（数据库和环境变量中都未找到）"
-                    }
+                    api_key = ""
+                    if allow_anonymous:
+                        print(f"ℹ️ {display_name} 允许无 API Key 测试，按匿名模式继续")
+                    else:
+                        print(f"⚠️ {display_name} 未配置有效API Key，先按匿名模式测试连接")
             else:
                 print(f"✅ 使用数据库配置的 {display_name} API密钥")
 
@@ -3396,7 +3432,7 @@ class ConfigService:
                 "message": f"测试失败: {str(e)}"
             }
 
-    async def _test_provider_connection(self, provider_name: str, api_key: str, display_name: str) -> dict:
+    async def _test_provider_connection(self, provider_name: str, api_key: Optional[str], display_name: str) -> dict:
         """测试具体厂家的连接"""
         import asyncio
 
@@ -4357,7 +4393,7 @@ class ConfigService:
 
     def _test_openai_compatible_api(
         self,
-        api_key: str,
+        api_key: Optional[str],
         display_name: str,
         base_url: str = None,
         provider_name: str = None,
@@ -4392,10 +4428,9 @@ class ConfigService:
             url = f"{base_url}/chat/completions"
             logger.info(f"   [测试API] 最终请求URL: {url}")
 
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}"
-            }
+            headers = {"Content-Type": "application/json"}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
 
             # 🔥 根据不同厂家选择合适的测试模型
             test_model = model_name or "gpt-3.5-turbo"

@@ -54,6 +54,8 @@ class RiskDebateState(TypedDict):
 class AgentState(MessagesState):
     company_of_interest: Annotated[str, "Company that we are interested in trading"]
     trade_date: Annotated[str, "What date we are trading at"]
+    selected_analysts: Annotated[Sequence[str], "Selected analysts for this run"]
+    quality_gate_config: Annotated[dict, "Quality gate runtime configuration"]
 
     sender: Annotated[str, "Agent that sent this message"]
 
@@ -68,6 +70,7 @@ class AgentState(MessagesState):
         str, "Report from the News Researcher of current world affairs"
     ]
     fundamentals_report: Annotated[str, "Report from the Fundamentals Researcher"]
+    data_quality_summary: Annotated[str, "Data quality summary after analyst stage"]
 
     # 🔧 死循环修复: 工具调用计数器
     market_tool_call_count: Annotated[int, "Market analyst tool call counter"]

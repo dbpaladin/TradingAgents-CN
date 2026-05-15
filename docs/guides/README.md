@@ -32,6 +32,7 @@ status: updated
 - **[成本控制指南](./cost-control-guide.md)** - API成本管理和优化
 - **[数据源配置指南](./data-source-guide.md)** - 数据源配置和使用
 - **[模型选择指南](./model-selection-guide.md)** - LLM模型选择建议
+- **[A-Stock Enhanced 灰度发布指南](./a_stock_enhanced_gray_release.md)** - Tushare主备路由、灰度放量、巡检与回退手册
 
 ## 🎯 使用路径推荐
 

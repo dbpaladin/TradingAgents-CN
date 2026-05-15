@@ -4,6 +4,7 @@
 """
 
 import asyncio
+import os
 import uuid
 import logging
 import re
@@ -683,6 +684,117 @@ class SimpleAnalysisService:
             logger.warning(f"⚠️ 补齐股票名称时出现异常: {e}")
         return tasks
 
+    def _get_stock_display_name(self, stock_symbol: str, stock_name: Optional[str] = None) -> str:
+        """统一格式化股票展示名，优先输出“名称（代码）”"""
+        resolved_name = (stock_name or "").strip()
+        if not resolved_name or resolved_name == stock_symbol or resolved_name == f"股票{stock_symbol}":
+            return stock_symbol
+        return f"{resolved_name}（{stock_symbol}）"
+
+    def _ensure_report_has_stock_identity(
+        self,
+        content: str,
+        report_title: str,
+        stock_symbol: str,
+        stock_name: Optional[str] = None,
+    ) -> str:
+        """确保报告正文显式包含股票名称与代码，避免最终产物只有代码。"""
+        normalized_content = (content or "").strip()
+        display_name = self._get_stock_display_name(stock_symbol, stock_name)
+        identity_line = f"**分析对象**：{display_name}"
+
+        if not normalized_content:
+            return f"# {report_title}\n\n{identity_line}\n"
+
+        preview = normalized_content[:300]
+        if identity_line in preview or display_name in preview:
+            return normalized_content
+
+        if normalized_content.startswith("#"):
+            lines = normalized_content.splitlines()
+            first_line = lines[0] if lines else f"# {report_title}"
+            remainder = "\n".join(lines[1:]).lstrip("\n")
+            if remainder:
+                return f"{first_line}\n\n{identity_line}\n\n{remainder}"
+            return f"{first_line}\n\n{identity_line}\n"
+
+        return f"# {report_title}\n\n{identity_line}\n\n{normalized_content}"
+
+    def _build_news_report_fallback(
+        self,
+        stock_symbol: str,
+        state: Optional[Dict[str, Any]] = None,
+        reason: Optional[str] = None,
+    ) -> str:
+        """生成新闻报告降级内容，避免最终产物出现空文件。"""
+        stock_name = stock_symbol
+        if isinstance(state, dict):
+            stock_name = state.get("company_of_interest") or stock_symbol
+
+        fallback_reason = reason or "工作流最终状态中缺少有效的 `news_report`，原始新闻报告未成功落盘。"
+        return (
+            f"## {stock_symbol} 新闻分析降级报告\n\n"
+            f"- 分析对象：{stock_name}（{stock_symbol}）\n"
+            f"- 问题：{fallback_reason}\n"
+            f"- 处理建议：复查新闻工具返回、模型工具调用次数限制与 ToolMessage 汇总链路。\n"
+            f"- 结论：本次新闻维度结果无效，不应作为最终投资决策的强证据。\n"
+        )
+
+    def _normalize_probability_score(self, raw_value: Any, default: float = 0.0) -> float:
+        """将 0-1 / 0-100 / 字符串 百分比分数统一归一为 0-1。"""
+        if raw_value is None:
+            return default
+
+        try:
+            if isinstance(raw_value, str):
+                text = raw_value.strip().replace("%", "")
+                if not text:
+                    return default
+                value = float(text)
+                if "%" in raw_value:
+                    value /= 100.0
+            else:
+                value = float(raw_value)
+        except (TypeError, ValueError):
+            return default
+
+        if value < 0:
+            return default
+        if value > 1:
+            value /= 100.0
+        return max(0.0, min(value, 1.0))
+
+    def _format_probability_percent(self, raw_value: Any, default: float = 0.0) -> str:
+        """将概率分数格式化为百分比文本。"""
+        normalized = self._normalize_probability_score(raw_value, default=default)
+        return f"{normalized:.1%}"
+
+    def _normalize_report_score_text(self, text: Any) -> Any:
+        """统一正文里的置信度/风险评分展示口径，避免同时出现 0-1 与百分比。"""
+        if not isinstance(text, str) or not text.strip():
+            return text
+
+        patterns = [
+            (
+                r"(\*{0,2}置信度\*{0,2}\s*[：:]\s*\*{0,2})(\d+(?:\.\d+)?%?)(\*{0,2})",
+                0.0,
+            ),
+            (
+                r"(\*{0,2}风险评分\*{0,2}\s*[：:]\s*\*{0,2})(\d+(?:\.\d+)?%?)(\*{0,2})",
+                0.0,
+            ),
+        ]
+
+        normalized_text = text
+        for pattern, default in patterns:
+            normalized_text = re.sub(
+                pattern,
+                lambda match: f"{match.group(1)}{self._format_probability_percent(match.group(2), default=default)}{match.group(3)}",
+                normalized_text,
+            )
+
+        return normalized_text
+
     def _normalize_action(self, raw_action: Optional[str]) -> Optional[str]:
         """将动作文本归一化为：买入 / 卖出 / 持有"""
         if not raw_action:
@@ -755,6 +867,152 @@ class SimpleAnalysisService:
         if re.search(r"(持有|观望|等待|不操作|HOLD)", short_text, re.IGNORECASE):
             return "持有"
         return None
+
+    def _get_risk_level_label(self, risk_score: Any) -> str:
+        """将风险分数映射为中文风险等级。"""
+        score = self._normalize_probability_score(risk_score, default=0.3)
+        if score >= 0.7:
+            return "高"
+        if score >= 0.4:
+            return "中"
+        return "低"
+
+    def _build_position_guidance(self, action: str, risk_score: Any, confidence: Any) -> Dict[str, str]:
+        """构造面向持仓者的平仓/减仓/加仓/持有策略参考。"""
+        normalized_action = self._normalize_action(action) or "持有"
+        normalized_risk = self._normalize_probability_score(risk_score, default=0.3)
+        normalized_confidence = self._normalize_probability_score(confidence, default=0.5)
+
+        if normalized_action == "卖出":
+            final_advice = "以风险收缩为主，优先考虑平仓，其次是反弹过程中的分批减仓。"
+            close_strategy = "若基本面逻辑被证伪、跌破关键支撑位，或短期风险事件已触发，优先执行分批平仓，避免被动深套。"
+            reduce_strategy = "若暂未出现流动性风险，但波动和回撤明显放大，可先减仓到可承受仓位，等待趋势重新企稳。"
+            add_strategy = "不建议逆势加仓；只有在风险出清、趋势重新站稳且成交量恢复后，才考虑小仓位试探。"
+            hold_strategy = "仅适合已有较厚安全垫、且能接受较大波动的持仓者短线观察；若继续走弱，应迅速切回减仓或平仓方案。"
+        elif normalized_action == "买入":
+            final_advice = "以顺势布局为主，优先考虑分批加仓或新开仓，但不要一次性重仓。"
+            close_strategy = "若买入后快速跌破止损位、核心催化落空，或市场风格突变，应放弃幻想并及时平仓止损。"
+            reduce_strategy = "若短期冲高后量价背离、接近阶段目标位，或组合仓位已偏重，可先兑现一部分利润、控制回撤。"
+            add_strategy = "更适合采用分批加仓策略：回踩关键均线不破、基本面验证继续强化、板块资金持续流入时逐步提升仓位。"
+            hold_strategy = "已有持仓者可继续持有并跟踪成交量、业绩兑现和板块强度；若趋势延续，可由持有转为小幅加仓。"
+        else:
+            final_advice = "以持有观察为主，暂不宜激进操作，等待更明确的趋势或催化再决定加减仓。"
+            close_strategy = "若后续跌破中期支撑、基本面明显恶化，或外部风险超预期，应从观望切换到平仓方案。"
+            reduce_strategy = "若股价接近压力位却迟迟不能突破，或波动率持续抬升，可小幅减仓降低组合风险。"
+            add_strategy = "只有在放量突破关键压力位、业绩或政策催化进一步确认后，才建议考虑试探性加仓。"
+            hold_strategy = "当前更适合保留核心仓位、边走边看，重点观察趋势确认、量能变化与市场情绪改善情况。"
+
+        if normalized_risk >= 0.7:
+            final_advice += " 当前风险偏高，执行上宜更保守。"
+            reduce_strategy += " 仓位控制应更坚决，避免情绪化补仓。"
+        elif normalized_confidence >= 0.75 and normalized_risk <= 0.35:
+            add_strategy += " 当前信号一致性较好，但仍建议保留分批节奏。"
+
+        return {
+            "final_advice": final_advice,
+            "close_strategy": close_strategy,
+            "reduce_strategy": reduce_strategy,
+            "add_strategy": add_strategy,
+            "hold_strategy": hold_strategy,
+        }
+
+    def _build_recommendation_text(
+        self,
+        decision: Dict[str, Any],
+        reports: Optional[Dict[str, Any]] = None
+    ) -> Tuple[str, str]:
+        """生成面向页面和报告导出的投资建议文本。"""
+        if not isinstance(decision, dict):
+            decision = {}
+        if not isinstance(reports, dict):
+            reports = {}
+
+        action = self._normalize_action(decision.get("action")) or "持有"
+        confidence_text = self._format_probability_percent(decision.get("confidence", 0.5), default=0.5)
+        risk_score = decision.get("risk_score", 0.3)
+        risk_text = self._format_probability_percent(risk_score, default=0.3)
+        risk_level = self._get_risk_level_label(risk_score)
+        current_price = decision.get("current_price")
+        target_price = decision.get("target_price")
+        execution_advice = str(decision.get("execution_advice", "") or "").strip()
+        reasoning = str(decision.get("reasoning", "") or "").strip()
+        consistency_note = str(decision.get("consistency_note", "") or "").strip()
+
+        guidance = self._build_position_guidance(action, risk_score, decision.get("confidence", 0.5))
+
+        base_lines = [
+            f"最终建议：{action}",
+            f"参考结论：{guidance['final_advice']}",
+            f"持仓者策略参考：平仓看风险兑现，减仓看压力位与波动率，加仓看趋势确认与资金回流，持有看逻辑是否持续验证。",
+            f"平仓策略：{guidance['close_strategy']}",
+            f"减仓策略：{guidance['reduce_strategy']}",
+            f"加仓策略：{guidance['add_strategy']}",
+            f"持有策略：{guidance['hold_strategy']}",
+            f"置信度：{confidence_text}",
+            f"风险等级：{risk_level}（风险评分 {risk_text}）",
+        ]
+
+        if current_price not in (None, ""):
+            base_lines.append(f"当前价格：{current_price}元")
+        if target_price not in (None, ""):
+            base_lines.append(f"目标价格：{target_price}元")
+        if execution_advice:
+            base_lines.append(f"执行建议：{execution_advice}")
+        if reasoning:
+            base_lines.append(f"核心依据：{reasoning}")
+        if consistency_note:
+            base_lines.append(f"一致性修正：{consistency_note}")
+
+        recommendation_text = "\n".join(base_lines)
+
+        markdown_lines = [
+            "### 最终建议",
+            "",
+            f"- 方向判断：**{action}**",
+            f"- 参考结论：{guidance['final_advice']}",
+            f"- 置信度：{confidence_text}",
+            f"- 风险等级：{risk_level}（风险评分 {risk_text}）",
+        ]
+        if current_price not in (None, ""):
+            markdown_lines.append(f"- 当前价格：{current_price}元")
+        if target_price not in (None, ""):
+            markdown_lines.append(f"- 目标价格：{target_price}元")
+        if execution_advice:
+            markdown_lines.append(f"- 执行建议：{execution_advice}")
+        if consistency_note:
+            markdown_lines.append(f"- 一致性修正：{consistency_note}")
+
+        markdown_lines.extend([
+            "",
+            "### 持仓者策略参考",
+            "",
+            f"#### 平仓策略\n{guidance['close_strategy']}",
+            "",
+            f"#### 减仓策略\n{guidance['reduce_strategy']}",
+            "",
+            f"#### 加仓策略\n{guidance['add_strategy']}",
+            "",
+            f"#### 持有策略\n{guidance['hold_strategy']}",
+        ])
+
+        if reasoning:
+            markdown_lines.extend([
+                "",
+                "### 核心依据",
+                "",
+                reasoning,
+            ])
+
+        final_decision_report = reports.get("final_trade_decision")
+        if isinstance(final_decision_report, str) and final_decision_report.strip():
+            markdown_lines.extend([
+                "",
+                "### 决策原文摘录",
+                "",
+                final_decision_report.strip(),
+            ])
+
+        return recommendation_text, "\n".join(markdown_lines)
 
     def _reconcile_report_actions(
         self,
@@ -1329,6 +1587,8 @@ class SimpleAnalysisService:
             deep_provider = deep_provider_info["provider"]
             quick_backend_url = quick_provider_info["backend_url"]
             deep_backend_url = deep_provider_info["backend_url"]
+            quick_model_config = quick_provider_info.get("model_config")
+            deep_model_config = deep_provider_info.get("model_config")
 
             logger.info(f"🔍 [供应商查找] 快速模型 {quick_model} 对应的供应商: {quick_provider}")
             logger.info(f"🔍 [API地址] 快速模型使用 backend_url: {quick_backend_url}")
@@ -1352,7 +1612,9 @@ class SimpleAnalysisService:
                 quick_model=quick_model,
                 deep_model=deep_model,
                 llm_provider=quick_provider,  # 主要使用快速模型的供应商
-                market_type=market_type  # 使用前端传递的市场类型
+                market_type=market_type,  # 使用前端传递的市场类型
+                quick_model_config=quick_model_config,
+                deep_model_config=deep_model_config,
             )
 
             # 🔧 添加混合模式配置
@@ -1491,9 +1753,14 @@ class SimpleAnalysisService:
                 except Exception as e:
                     logger.warning(f"⚠️ 进度模拟失败: {e}")
 
-            # 启动进度模拟线程
-            progress_thread = threading.Thread(target=simulate_progress, daemon=True)
-            progress_thread.start()
+            # 默认关闭模拟进度，避免在真实图执行仍停留在前序节点时，
+            # 把前端状态提前推到研究团队阶段，造成“卡在看涨研究员”的错觉。
+            if os.getenv("TA_ENABLE_SIMULATED_PROGRESS", "false").lower() == "true":
+                progress_thread = threading.Thread(target=simulate_progress, daemon=True)
+                progress_thread.start()
+                logger.info("📊 已启用模拟进度线程（TA_ENABLE_SIMULATED_PROGRESS=true）")
+            else:
+                logger.info("📊 已禁用模拟进度线程，使用真实图执行进度")
 
             # 定义进度回调函数，用于接收 LangGraph 的实时进度
             # 节点进度映射表（与 RedisProgressTracker 的步骤权重对应）
@@ -1818,8 +2085,9 @@ class SimpleAnalysisService:
 
                     formatted_decision = {
                         'action': chinese_action,
-                        'confidence': decision.get('confidence', 0.5),
-                        'risk_score': decision.get('risk_score', 0.3),
+                        'execution_advice': decision.get('execution_advice', ''),
+                        'confidence': self._normalize_probability_score(decision.get('confidence', 0.5), default=0.5),
+                        'risk_score': self._normalize_probability_score(decision.get('risk_score', 0.3), default=0.3),
                         'target_price': target_price,
                         'reasoning': decision.get('reasoning', '暂无分析推理'),
                         'current_price': decision.get('current_price'),
@@ -1831,6 +2099,7 @@ class SimpleAnalysisService:
                     # 处理其他类型
                     formatted_decision = {
                         'action': '持有',
+                        'execution_advice': '',
                         'confidence': 0.5,
                         'risk_score': 0.3,
                         'target_price': None,
@@ -1843,6 +2112,7 @@ class SimpleAnalysisService:
                 logger.error(f"❌ 格式化decision失败: {e}")
                 formatted_decision = {
                     'action': '持有',
+                    'execution_advice': '',
                     'confidence': 0.5,
                     'risk_score': 0.3,
                     'target_price': None,
@@ -1877,21 +2147,13 @@ class SimpleAnalysisService:
                         summary += "..."
                     logger.info(f"📝 [SUMMARY] 从state.final_trade_decision提取摘要: {len(summary)}字符")
 
-            # 3. 生成recommendation（从decision的reasoning）
+            # 3. 生成recommendation（增强为持仓者视角的结构化建议）
             if isinstance(formatted_decision, dict):
-                action = formatted_decision.get('action', '持有')
-                target_price = formatted_decision.get('target_price')
-                reasoning = formatted_decision.get('reasoning', '')
-                consistency_note = formatted_decision.get('consistency_note', '')
-
-                # 生成投资建议
-                recommendation = f"投资建议：{action}。"
-                if target_price:
-                    recommendation += f"目标价格：{target_price}元。"
-                if reasoning:
-                    recommendation += f"决策依据：{reasoning}"
-                if consistency_note:
-                    recommendation += f"一致性修正：{consistency_note}"
+                recommendation, recommendation_report = self._build_recommendation_text(
+                    formatted_decision,
+                    reports
+                )
+                reports["investment_recommendation"] = recommendation_report
                 logger.info(f"💡 [RECOMMENDATION] 生成投资建议: {len(recommendation)}字符")
 
             # 4. 如果还是没有，从其他报告中提取
@@ -2914,72 +3176,78 @@ class SimpleAnalysisService:
 
             state = result.get('state', {})
             saved_files = {}
+            stock_name = (
+                result.get("stock_name")
+                or (state.get("company_of_interest") if isinstance(state, dict) else None)
+                or self._resolve_stock_name(stock_symbol)
+            )
+            stock_display_name = self._get_stock_display_name(stock_symbol, stock_name)
 
             # 定义报告模块映射 - 完全按照web目录的定义
             report_modules = {
                 'market_report': {
                     'filename': 'market_report.md',
-                    'title': f'{stock_symbol} 股票技术分析报告',
+                    'title': f'{stock_display_name} 股票技术分析报告',
                     'state_key': 'market_report'
                 },
                 'a_share_sentiment_report': {
                     'filename': 'a_share_sentiment_report.md',
-                    'title': f'{stock_symbol} A股盘面情绪分析报告',
+                    'title': f'{stock_display_name} A股盘面情绪分析报告',
                     'state_key': 'a_share_sentiment_report'
                 },
                 'fund_flow_report': {
                     'filename': 'fund_flow_report.md',
-                    'title': f'{stock_symbol} A股资金面分析报告',
+                    'title': f'{stock_display_name} A股资金面分析报告',
                     'state_key': 'fund_flow_report'
                 },
                 'theme_rotation_report': {
                     'filename': 'theme_rotation_report.md',
-                    'title': f'{stock_symbol} A股题材轮动分析报告',
+                    'title': f'{stock_display_name} A股题材轮动分析报告',
                     'state_key': 'theme_rotation_report'
                 },
                 'institutional_theme_report': {
                     'filename': 'institutional_theme_report.md',
-                    'title': f'{stock_symbol} 机构布局题材分析报告',
+                    'title': f'{stock_display_name} 机构布局题材分析报告',
                     'state_key': 'institutional_theme_report'
                 },
                 'sentiment_report': {
                     'filename': 'sentiment_report.md',
-                    'title': f'{stock_symbol} 公共舆情分析报告',
+                    'title': f'{stock_display_name} 公共舆情分析报告',
                     'state_key': 'sentiment_report'
                 },
                 'news_report': {
                     'filename': 'news_report.md',
-                    'title': f'{stock_symbol} 新闻事件分析报告',
+                    'title': f'{stock_display_name} 新闻事件分析报告',
                     'state_key': 'news_report'
                 },
                 'fundamentals_report': {
                     'filename': 'fundamentals_report.md',
-                    'title': f'{stock_symbol} 基本面分析报告',
+                    'title': f'{stock_display_name} 基本面分析报告',
                     'state_key': 'fundamentals_report'
                 },
                 'investment_plan': {
                     'filename': 'investment_plan.md',
-                    'title': f'{stock_symbol} 投资决策报告',
+                    'title': f'{stock_display_name} 投资决策报告',
                     'state_key': 'investment_plan'
                 },
                 'trader_investment_plan': {
                     'filename': 'trader_investment_plan.md',
-                    'title': f'{stock_symbol} 交易计划报告',
+                    'title': f'{stock_display_name} 交易计划报告',
                     'state_key': 'trader_investment_plan'
                 },
                 'final_trade_decision': {
                     'filename': 'final_trade_decision.md',
-                    'title': f'{stock_symbol} 最终投资决策',
+                    'title': f'{stock_display_name} 最终投资决策',
                     'state_key': 'final_trade_decision'
                 },
                 'investment_debate_state': {
                     'filename': 'research_team_decision.md',
-                    'title': f'{stock_symbol} 研究团队决策报告',
+                    'title': f'{stock_display_name} 研究团队决策报告',
                     'state_key': 'investment_debate_state'
                 },
                 'risk_debate_state': {
                     'filename': 'risk_management_decision.md',
-                    'title': f'{stock_symbol} 风险管理团队决策报告',
+                    'title': f'{stock_display_name} 风险管理团队决策报告',
                     'state_key': 'risk_debate_state'
                 }
             }
@@ -2996,6 +3264,22 @@ class SimpleAnalysisService:
                         else:
                             report_content = str(module_content)
 
+                        if module_key == 'news_report' and not report_content.strip():
+                            report_content = self._build_news_report_fallback(
+                                stock_symbol=stock_symbol,
+                                state=state,
+                                reason="工作流最终状态中的 `news_report` 为空，原始新闻报告未成功落盘。",
+                            )
+                            logger.warning("⚠️ news_report 为空，已写入降级报告避免空文件")
+
+                        report_content = self._normalize_report_score_text(report_content)
+                        report_content = self._ensure_report_has_stock_identity(
+                            content=report_content,
+                            report_title=module_info['title'],
+                            stock_symbol=stock_symbol,
+                            stock_name=stock_name,
+                        )
+
                         # 保存到文件 - 使用web目录的文件名
                         file_path = reports_dir / module_info['filename']
                         with open(file_path, 'w', encoding='utf-8') as f:
@@ -3007,16 +3291,35 @@ class SimpleAnalysisService:
                 except Exception as e:
                     logger.warning(f"⚠️ 保存模块 {module_key} 失败: {e}")
 
+            if 'news_report' not in saved_files:
+                news_fallback_path = reports_dir / "news_report.md"
+                news_fallback = self._ensure_report_has_stock_identity(
+                    content=self._build_news_report_fallback(
+                        stock_symbol=stock_symbol,
+                        state=state,
+                    ),
+                    report_title=report_modules['news_report']['title'],
+                    stock_symbol=stock_symbol,
+                    stock_name=stock_name,
+                )
+                with open(news_fallback_path, 'w', encoding='utf-8') as f:
+                    f.write(news_fallback)
+                saved_files['news_report'] = str(news_fallback_path)
+                logger.warning("⚠️ news_report 缺失，已强制写入降级报告避免空文件")
+
             # 保存最终决策报告 - 完全按照web目录的方式
             decision = result.get('decision', {})
             if decision:
-                decision_content = f"# {stock_symbol} 最终投资决策\n\n"
+                decision_content = f"# {stock_display_name} 最终投资决策\n\n"
+                decision_content += f"**分析对象**：{stock_display_name}\n\n"
 
                 if isinstance(decision, dict):
                     decision_content += f"## 投资建议\n\n"
-                    decision_content += f"**行动**: {decision.get('action', 'N/A')}\n\n"
-                    decision_content += f"**置信度**: {decision.get('confidence', 0):.1%}\n\n"
-                    decision_content += f"**风险评分**: {decision.get('risk_score', 0):.1%}\n\n"
+                    decision_content += f"**方向判断**: {decision.get('action', 'N/A')}\n\n"
+                    if decision.get('execution_advice'):
+                        decision_content += f"**执行建议**: {decision.get('execution_advice')}\n\n"
+                    decision_content += f"**置信度**: {self._format_probability_percent(decision.get('confidence', 0))}\n\n"
+                    decision_content += f"**风险评分**: {self._format_probability_percent(decision.get('risk_score', 0))}\n\n"
                     decision_content += f"**目标价位**: {decision.get('target_price', 'N/A')}\n\n"
                     if decision.get('current_price') is not None:
                         decision_content += f"**当前价格**: {decision.get('current_price')}\n\n"
@@ -3037,6 +3340,7 @@ class SimpleAnalysisService:
             # 保存分析元数据文件 - 完全按照web目录的方式
             metadata = {
                 'stock_symbol': stock_symbol,
+                'stock_name': stock_name,
                 'analysis_date': analysis_date_str,
                 'timestamp': datetime.now().isoformat(),
                 'research_depth': result.get('research_depth', 1),

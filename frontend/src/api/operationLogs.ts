@@ -3,6 +3,7 @@
  */
 
 import { ApiClient } from './request'
+import type { RequestConfig } from './request'
 
 // 操作日志数据类型
 export interface OperationLog {
@@ -164,7 +165,7 @@ export class OperationLogsApi {
     if (params.action_type) queryParams.append('action_type', params.action_type)
     
     const url = `/api/system/logs/export/csv${queryParams.toString() ? '?' + queryParams.toString() : ''}`
-    return ApiClient.get(url, { responseType: 'blob' })
+    return ApiClient.get(url, undefined, { responseType: 'blob', skipErrorHandler: true } as RequestConfig) as unknown as Promise<Blob>
   }
 }
 

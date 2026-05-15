@@ -129,6 +129,21 @@ class Settings(BaseSettings):
     STOCK_DATA_API_URL: str = Field(default="")
     STOCK_DATA_API_KEY: str = Field(default="")
 
+    # A 股增强数据源 PoC 配置
+    A_STOCK_DATA_ENABLED: bool = Field(default=True)
+    A_STOCK_TENCENT_QUOTES_ENABLED: bool = Field(default=True)
+    A_STOCK_MOOTDX_ENABLED: bool = Field(default=True)
+    A_STOCK_TUSHARE_ENABLED: bool = Field(default=True)
+    A_STOCK_NORTHBOUND_ENABLED: bool = Field(default=True)
+    A_STOCK_ANNOUNCEMENTS_ENABLED: bool = Field(default=True)
+    A_STOCK_FINANCE_SOURCE: str = Field(default="hybrid", description="A股增强财务快照数据源策略: tushare|mootdx|hybrid")
+    A_STOCK_NORTHBOUND_SOURCE: str = Field(default="hybrid", description="A股增强北向数据源策略: tushare|ths|hybrid")
+    A_STOCK_FINANCE_TUSHARE_RATIO: int = Field(default=100, ge=0, le=100, description="财务快照灰度比例（0-100），hybrid 模式下命中比例")
+    A_STOCK_NORTHBOUND_TUSHARE_RATIO: int = Field(default=100, ge=0, le=100, description="北向数据灰度比例（0-100），hybrid 模式下命中比例")
+    A_STOCK_QUOTE_TTL_SECONDS: int = Field(default=30)
+    A_STOCK_NORTHBOUND_TTL_SECONDS: int = Field(default=30)
+    A_STOCK_REQUEST_TIMEOUT_SECONDS: int = Field(default=10)
+
     # SSE 配置
     SSE_POLL_TIMEOUT_SECONDS: float = Field(default=1.0)
     SSE_HEARTBEAT_INTERVAL_SECONDS: int = Field(default=10)
